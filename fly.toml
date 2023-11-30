@@ -1,0 +1,25 @@
+# fly.toml app configuration file generated for raphgpt on 2023-12-01T01:09:55+08:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = "raphgpt"
+primary_region = "sin"
+
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[processes]
+app = "node ./build/index.js"
+
+[build]
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+  auto_extend_size_threshold = 0
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 1024

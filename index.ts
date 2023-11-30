@@ -193,14 +193,13 @@ bot.on("message", async (ctx) => {
     completionLastChunk = chunk;
 
     sentResponse.text += chunk.choices[0]?.delta?.content ?? "";
-    sentResponse.text = sentResponse.text.trim();
 
     if (!sentResponseMessage) {
       sentResponseMessage = await ctx.reply(sentResponse.text, {
         parse_mode: "MarkdownV2",
       });
     } else {
-      if (sentResponse.text !== sentResponse.prev) {
+      if (sentResponse.text.trim() !== sentResponse.prev.trim()) {
         try {
           await ctx.api.editMessageText(
             ctx.chat.id,
