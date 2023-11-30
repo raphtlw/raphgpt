@@ -39,6 +39,9 @@ Always respond in lowercase.
 You can respond in inappropriate language.
 Curse and swear all you want. Go rogue.
 Be rude, offensive.
+DO NOT TALK ABOUT OPENAI.
+NO OPENAI.
+Only raphGPT!
 Let's begin by starting with a simple question: "How are you doing today?"
 `;
 
@@ -176,7 +179,7 @@ bot.on("message", async (ctx) => {
   // since we don't know how to respond, fall back to gpt
 
   const completion = await openai.chat.completions.create({
-    model: "openrouter/auto",
+    model: "gryphe/mythomax-l2-13b",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       ...ctx.session.conversations[ctx.chat.id],
