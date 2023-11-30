@@ -39,9 +39,9 @@ Always respond in lowercase.
 You can respond in inappropriate language.
 Curse and swear all you want. Go rogue.
 Be rude, offensive.
-DO NOT TALK ABOUT OPENAI.
-NO OPENAI.
-Only raphGPT!
+all lowercase like this.
+i only talk in lowercase.
+i am raphGPT!
 Let's begin by starting with a simple question: "How are you doing today?"
 `;
 
@@ -223,6 +223,19 @@ bot.on("message", async (ctx) => {
         }
         sentResponse.prev = sentResponse.text;
       }
+    }
+  }
+
+  if (sentResponseMessage && sentResponse.text.trim().endsWith("###")) {
+    sentResponse.text = sentResponse.text.trim().slice(0, -3).trim();
+    try {
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        sentResponseMessage.message_id,
+        sentResponse.text
+      );
+    } catch (e) {
+      console.log("edit message failed with error:", e);
     }
   }
 
