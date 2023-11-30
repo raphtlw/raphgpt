@@ -1,8 +1,8 @@
+import "dotenv/config";
 import { freeStorage } from "@grammyjs/storage-free";
 import { createId } from "@paralleldrive/cuid2";
 import { AutoTokenizer } from "@xenova/transformers";
-import "dotenv/config";
-import { Bot, Context, SessionFlavor, session } from "grammy";
+import { Bot, Context, SessionFlavor, session, webhookCallback } from "grammy";
 import { Message } from "grammy/types";
 import OpenAI from "openai";
 import { db } from "./db";
@@ -247,4 +247,5 @@ bot.on("message", async (ctx) => {
 });
 
 bot.catch((err) => console.error(err));
-bot.start();
+
+export default webhookCallback(bot, "http");
