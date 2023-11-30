@@ -2,12 +2,12 @@ import { freeStorage } from "@grammyjs/storage-free";
 import { createId } from "@paralleldrive/cuid2";
 import { AutoTokenizer } from "@xenova/transformers";
 import "dotenv/config";
-import express from "express";
 import { Bot, Context, SessionFlavor, session, webhookCallback } from "grammy";
 import { Message } from "grammy/types";
 import OpenAI from "openai";
 import { db } from "./db.js";
 import { knowledge } from "./schema.js";
+import { addReplyParam } from "@roziscoding/grammy-autoquote";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -18,11 +18,7 @@ if (!TELEGRAM_BOT_TOKEN) {
 
 type BotContext = Context & SessionFlavor<SessionData>;
 
-const app = express();
 const bot = new Bot<BotContext>(TELEGRAM_BOT_TOKEN);
-
-app.use(express.json());
-app.use(`/${TELEGRAM_BOT_TOKEN}`, webhookCallback(bot, "express"));
 
 const SYSTEM_PROMPT = `Your name is Raphael.
 You are a GPT based model trained by Raphael.
@@ -82,6 +78,8 @@ bot.use(async (ctx, next) => {
 });
 
 bot.command("start", async (ctx) => {
+  ctx.api.config.use(addReplyParam(ctx));
+
   const initialMessage: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
     role: "assistant",
     content: "hey it's raph what do you want",
@@ -96,12 +94,16 @@ bot.command("start", async (ctx) => {
 });
 
 bot.command("clear", async (ctx) => {
+  ctx.api.config.use(addReplyParam(ctx));
+
   ctx.session.conversations[ctx.chat.id] = [];
 
   await ctx.reply("Conversation cleared!");
 });
 
 bot.command("learn", async (ctx) => {
+  ctx.api.config.use(addReplyParam(ctx));
+
   const fromConv =
     ctx.session.conversations[ctx.chat.id][
       ctx.session.conversations[ctx.chat.id]
@@ -119,6 +121,8 @@ bot.command("learn", async (ctx) => {
 });
 
 bot.on("message", async (ctx) => {
+  ctx.api.config.use(addReplyParam(ctx));
+
   if (ctx.session.learn) {
     ctx.session.learn.output = ctx.message.text;
 
@@ -253,6 +257,7 @@ bot.on("message", async (ctx) => {
 
 bot.catch((err) => console.error(err));
 
-app.listen(Number(process.env.PORT), async () => {
-  await bot.api.setWebhook("");
-});
+process.once("SIGINT", () => bot.stop());
+process.once("SIGTERM", () => bot.stop());
+
+bot.start();

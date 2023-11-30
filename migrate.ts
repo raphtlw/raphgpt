@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { sqlite, db } from "./api/db.js";
+import { sqlite, db } from "./db.js";
 
 migrate(db, { migrationsFolder: "./migrations" });
 
