@@ -204,7 +204,10 @@ bot.on("message", async (ctx) => {
           await ctx.api.editMessageText(
             ctx.chat.id,
             sentResponseMessage.message_id,
-            sentResponse.text
+            sentResponse.text,
+            {
+              parse_mode: "MarkdownV2",
+            }
           );
         } catch (e) {
           console.log("edit message failed");
