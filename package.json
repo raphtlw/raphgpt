@@ -14,7 +14,9 @@
     "typescript": "^5.3.2"
   },
   "dependencies": {
+    "@grammyjs/runner": "^2.0.3",
     "@grammyjs/storage-free": "^2.4.0",
+    "@grammyjs/transformer-throttler": "^1.2.1",
     "@paralleldrive/cuid2": "^2.2.2",
     "@roziscoding/grammy-autoquote": "^1.1.2",
     "@xenova/transformers": "^2.9.0",

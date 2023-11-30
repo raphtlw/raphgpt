@@ -1,13 +1,15 @@
+import { run } from "@grammyjs/runner";
 import { freeStorage } from "@grammyjs/storage-free";
+import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { createId } from "@paralleldrive/cuid2";
+import { addReplyParam } from "@roziscoding/grammy-autoquote";
 import { AutoTokenizer } from "@xenova/transformers";
 import "dotenv/config";
-import { Bot, Context, SessionFlavor, session, webhookCallback } from "grammy";
+import { Bot, Context, SessionFlavor, session } from "grammy";
 import { Message } from "grammy/types";
 import OpenAI from "openai";
 import { db } from "./db.js";
 import { knowledge } from "./schema.js";
-import { addReplyParam } from "@roziscoding/grammy-autoquote";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -51,6 +53,9 @@ const openai = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY,
 });
+
+const throttler = apiThrottler();
+bot.api.config.use(throttler);
 
 type SessionData = {
   conversations: {
@@ -262,4 +267,4 @@ bot.catch((err) => console.error(err));
 process.once("SIGINT", () => bot.stop());
 process.once("SIGTERM", () => bot.stop());
 
-bot.start();
+run(bot);
