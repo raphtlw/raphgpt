@@ -7,6 +7,7 @@ import { Message } from "grammy/types";
 import OpenAI from "openai";
 import { db } from "./db";
 import { knowledge } from "./schema";
+import express from "express";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -17,7 +18,11 @@ if (!TELEGRAM_BOT_TOKEN) {
 
 type BotContext = Context & SessionFlavor<SessionData>;
 
+const app = express();
 const bot = new Bot<BotContext>(TELEGRAM_BOT_TOKEN);
+
+app.use(express.json());
+app.use(`/${TELEGRAM_BOT_TOKEN}`, webhookCallback(bot, "express"));
 
 const SYSTEM_PROMPT = `Your name is Raphael.
 You are a GPT based model trained by Raphael.
@@ -248,4 +253,6 @@ bot.on("message", async (ctx) => {
 
 bot.catch((err) => console.error(err));
 
-export default webhookCallback(bot, "http");
+app.listen(Number(process.env.PORT), async () => {
+  await bot.api.setWebhook("");
+});
