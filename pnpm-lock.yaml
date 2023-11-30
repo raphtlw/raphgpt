@@ -43,6 +43,9 @@ devDependencies:
   '@flydotio/dockerfile':
     specifier: ^0.4.11
     version: 0.4.11
+  '@tsconfig/node16':
+    specifier: ^16.1.1
+    version: 16.1.1
   '@types/better-sqlite3':
     specifier: ^7.6.8
     version: 7.6.8
@@ -1052,6 +1055,10 @@ packages:
   /@protobufjs/utf8@1.1.0:
     resolution: {integrity: sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw==}
     dev: false
+
+  /@tsconfig/node16@16.1.1:
+    resolution: {integrity: sha512-+pio93ejHN4nINX4pXqfnR/fPLRtJBaT4ORaa5RH0Oc1zoYmo2B2koG+M328CQhHKn1Wj6FcOxCDFXAot9NhvA==}
+    dev: true
 
   /@types/aws-lambda@8.10.129:
     resolution: {integrity: sha512-0Rl7CpTPVws5cp0Ui1gZh4Q+TXC65bXVwTOGoI2RKW45dxWzyZGbjIX0uFjFYdIJ8vnD45y584rIIqvD2vBBfQ==}

@@ -1,13 +1,13 @@
-import "dotenv/config";
 import { freeStorage } from "@grammyjs/storage-free";
 import { createId } from "@paralleldrive/cuid2";
 import { AutoTokenizer } from "@xenova/transformers";
+import "dotenv/config";
+import express from "express";
 import { Bot, Context, SessionFlavor, session, webhookCallback } from "grammy";
 import { Message } from "grammy/types";
 import OpenAI from "openai";
-import { db } from "./db";
-import { knowledge } from "./schema";
-import express from "express";
+import { db } from "./db.js";
+import { knowledge } from "./schema.js";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -75,7 +75,7 @@ bot.use(
 
 bot.use(async (ctx, next) => {
   if ("conversations" in ctx.session == false) {
-    ctx.session.conversations = {};
+    (ctx.session as any).conversations = {};
   }
 
   await next();
@@ -220,7 +220,7 @@ bot.on("message", async (ctx) => {
 
   // get last chunk and check stats
   if (completionLastChunk) {
-    const generation = await fetch(
+    const generation: any = await fetch(
       `https://openrouter.ai/api/v1/generation?id=${completionLastChunk.id}`,
       {
         headers: {
