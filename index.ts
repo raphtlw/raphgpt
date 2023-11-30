@@ -215,7 +215,7 @@ bot.on("message", async (ctx) => {
             }
           );
         } catch (e) {
-          console.log("edit message failed");
+          console.log("edit message failed with error:", e);
         }
         sentResponse.prev = sentResponse.text;
       }
