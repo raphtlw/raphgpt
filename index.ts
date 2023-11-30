@@ -10,6 +10,7 @@ import { Message } from "grammy/types";
 import OpenAI from "openai";
 import { db } from "./db.js";
 import { knowledge } from "./schema.js";
+import { formatDistance } from "date-fns";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -274,6 +275,14 @@ bot.on("message", async (ctx) => {
     await ctx.api.sendMessage("471129788", completionNotification.join("\n"), {
       parse_mode: "MarkdownV2",
     });
+
+    await ctx.reply(
+      `Ready! Took [${generation.data.generation_time}ms/${formatDistance(
+        0,
+        generation.data.generation_time,
+        { includeSeconds: true }
+      )}]`
+    );
   } else {
     await ctx.api.sendMessage("471129788", "Completion was not found");
   }
