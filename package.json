@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "start": "tsx index.ts"
+    "start": "tsx api/index.ts"
   },
   "type": "module",
   "devDependencies": {
