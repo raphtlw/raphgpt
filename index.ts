@@ -281,7 +281,7 @@ bot.on("message", async (ctx) => {
         0,
         generation.data.generation_time,
         { includeSeconds: true }
-      )}]`
+      )}] ✅`
     );
   } else {
     await ctx.api.sendMessage("471129788", "Completion was not found");
