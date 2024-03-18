@@ -1,0 +1,7 @@
+{
+  "extends": "@tsconfig/node21",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  }
+}

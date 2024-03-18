@@ -1,0 +1,17 @@
+services:
+  memgpt:
+    build:
+      context: ./memgpt
+    restart: always
+    ports:
+      - 8283:8283
+    extra_hosts:
+      host.docker.internal: host-gateway
+    environment:
+      - MEMGPT_SERVER_PASS=${MEMGPT_SERVER_KEY}
+    env_file:
+      - .env
+  chromadb:
+    image: chromadb/chroma
+    ports:
+      - 8000:8000
