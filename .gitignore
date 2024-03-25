@@ -389,5 +389,5 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# additional secrets
+# created db
 raphgpt.sqlite
