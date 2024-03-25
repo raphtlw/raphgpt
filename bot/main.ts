@@ -47,6 +47,13 @@ const raphgptPersona = Handlebars.compile(
     )
     .toString()
 );
+const raphgptHuman = Handlebars.compile(
+  fs
+    .readFileSync(
+      fileURLToPath(import.meta.resolve("../res/humans/raphgpt.hbs"))
+    )
+    .toString()
+);
 
 const getOrCreateMemGPTUser = async (
   telegramUser: User
@@ -294,11 +301,9 @@ const getOrCreateChat = async (
   const agent = await memgpt.create_agent_api_agents_post(
     {
       config: {
-        human: `First name: ${telegramUser.first_name}
-Last name: ${telegramUser.last_name}
-Uses Telegram premium: ${telegramUser.is_premium}
-Username: ${telegramUser.username}
-`,
+        human: raphgptHuman({
+          telegramUser,
+        }),
         name: String(telegramChat.id),
         persona: raphgptPersona({}),
         preset: "raphgpt_chat",
