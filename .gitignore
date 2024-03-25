@@ -389,5 +389,5 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# created db
-raphgpt.sqlite
+# runtime data
+data/
