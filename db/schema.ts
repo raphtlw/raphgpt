@@ -1,46 +1,62 @@
-import { relations } from "drizzle-orm";
+import { timestamp } from "bot/time";
 import { int, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const chats = sqliteTable("chats", {
-  agentId: text("memgpt_agent_id").notNull(),
+// export const chats = sqliteTable("chats", {
+//   id: text("id").primaryKey(),
+//   telegramId: text("telegram_id").notNull(),
+// });
+
+// export const chatsRelations = relations(chats, ({ many }) => ({
+//   messages: many(messages),
+// }));
+
+export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(),
   telegramId: text("telegram_id").notNull(),
-});
-
-export const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
-  memgptApiKey: text("memgpt_api_key").notNull(),
-  memgptUserId: text("memgpt_user_id").notNull(),
-  telegramId: text("telegram_id").notNull(),
-});
-
-export const interimForwards = sqliteTable("interim_forwards", {
-  forwardedMessageId: text("forwarded_message_id").notNull(),
-  id: text("id").primaryKey(),
-  originalMessageChatId: text("original_message_chat_id").notNull(),
-  originalMessageId: text("original_message_id").notNull(),
-});
-
-export const interimForwardsRelations = relations(
-  interimForwards,
-  ({ one }) => ({
-    agentResponse: one(agentResponses),
-  })
-);
-
-export const agentResponses = sqliteTable("agent_responses", {
-  content: text("content").notNull(),
-  id: text("id").primaryKey(),
-  interimForwardedMessage: text("interim_forwarded_message")
+  telegramChatId: text("telegram_chat_id").notNull(),
+  telegramAuthorId: text("telegram_author_id").notNull(),
+  contextData: text("context_data").notNull(),
+  text: text("text"),
+  file: text("file"),
+  created: int("created")
     .notNull()
-    .references(() => interimForwards.id),
+    .$defaultFn(() => timestamp()),
 });
 
-export const openaiMessages = sqliteTable("openai_messages", {
-  created: int("created").notNull(),
-  data: text("data").notNull(),
-  id: text("id").primaryKey(),
-});
+// export const messagesRelations = relations(messages, ({ one }) => ({
+//   chat: one(chats, {
+//     fields: [messages.chatId],
+//     references: [chats.id],
+//   }),
+// }));
+
+// export const interimForwards = sqliteTable("interim_forwards", {
+//   forwardedMessageId: text("forwarded_message_id").notNull(),
+//   id: text("id").primaryKey(),
+//   originalMessageChatId: text("original_message_chat_id").notNull(),
+//   originalMessageId: text("original_message_id").notNull(),
+// });
+
+// export const interimForwardsRelations = relations(
+//   interimForwards,
+//   ({ one }) => ({
+//     agentResponse: one(agentResponses),
+//   })
+// );
+
+// export const agentResponses = sqliteTable("agent_responses", {
+//   content: text("content").notNull(),
+//   id: text("id").primaryKey(),
+//   interimForwardedMessage: text("interim_forwarded_message")
+//     .notNull()
+//     .references(() => interimForwards.id),
+// });
+
+// export const openaiMessages = sqliteTable("openai_messages", {
+//   created: int("created").notNull(),
+//   data: text("data").notNull(),
+//   id: text("id").primaryKey(),
+// });
 
 export const scheduledMessages = sqliteTable("scheduled_messages", {
   chatId: text("chat_id").notNull(),

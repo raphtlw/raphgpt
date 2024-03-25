@@ -3,7 +3,7 @@ import { code, fmt, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import assert from "assert";
 import { timestamp } from "bot/time";
-import { db } from "db/db";
+import { db } from "db";
 import { openaiMessages } from "db/schema";
 import { asc } from "drizzle-orm";
 import got from "got";

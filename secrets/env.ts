@@ -1,5 +1,6 @@
-import "dotenv/config";
 import { z } from "zod";
+
+import "dotenv/config";
 
 export const envSchema = z.object({
   COINGECKO_API_KEY: z.string(),
