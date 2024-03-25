@@ -1,11 +1,18 @@
 import type { Config } from "drizzle-kit";
-import { Env } from "./bot/env";
+
+import { z } from "zod";
+
+const Env = z
+  .object({
+    DATABASE_URL: z.string(),
+  })
+  .parse(process.env);
 
 export default {
-  schema: "./db/schema.ts",
-  out: "./drizzle",
-  driver: "libsql",
   dbCredentials: {
     url: Env.DATABASE_URL,
   },
+  driver: "libsql",
+  out: "./drizzle",
+  schema: "./db/schema.ts",
 } satisfies Config;

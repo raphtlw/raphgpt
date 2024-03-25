@@ -1,23 +1,4 @@
-import "dotenv/config";
-import { Bot, Context, GrammyError, HttpError, InlineKeyboard } from "grammy";
-import { z } from "zod";
-import got from "got";
-import { asc, eq } from "drizzle-orm";
-import { Env } from "./bot/env";
-import { db } from "./db/db";
-import { createId } from "@paralleldrive/cuid2";
-import {
-  agentResponses,
-  chats,
-  interimForwards,
-  openaiMessages,
-  users,
-} from "./db/schema";
-import assert from "assert";
-import { Chat, InputFile, User } from "grammy/types";
-import fs from "fs";
-import path from "path";
-import Handlebars from "handlebars";
+import { FileFlavor, hydrateFiles } from "@grammyjs/files";
 import {
   blockquote,
   bold,
@@ -27,16 +8,32 @@ import {
   pre,
   underline,
 } from "@grammyjs/parse-mode";
-import OpenAI from "openai";
-import { FileFlavor, hydrateFiles } from "@grammyjs/files";
-import { inspect } from "util";
-import { timestamp } from "./bot/time";
-import { handleToolCall } from "./bot/openai";
-import ffmpeg from "fluent-ffmpeg";
 import { run, sequentialize } from "@grammyjs/runner";
+import { createId } from "@paralleldrive/cuid2";
+import { memgpt } from "api/memgpt";
+import assert from "assert";
+import { handleToolCall } from "bot/openai";
+import { chatAction } from "bot/tasks";
+import { timestamp } from "bot/time";
+import { db } from "db/db";
+import {
+  agentResponses,
+  chats,
+  interimForwards,
+  openaiMessages,
+  users,
+} from "db/schema";
+import { asc, eq } from "drizzle-orm";
+import ffmpeg from "fluent-ffmpeg";
+import fs from "fs";
+import { Bot, Context, GrammyError, HttpError, InlineKeyboard } from "grammy";
+import { Chat, InputFile, User } from "grammy/types";
+import Handlebars from "handlebars";
+import OpenAI from "openai";
+import path from "path";
+import { Env } from "secrets/env";
 import { fileURLToPath } from "url";
-import { chatAction } from "./bot/tasks";
-import { api as memgpt } from "./api/generated/memgpt";
+import { inspect } from "util";
 
 const bot = new Bot<FileFlavor<Context>>(Env.TELEGRAM_API_KEY);
 const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
@@ -46,12 +43,7 @@ bot.api.config.use(hydrateFiles(bot.token));
 const raphgptPersona = Handlebars.compile(
   fs
     .readFileSync(
-      path.join(
-        path.dirname(fileURLToPath(import.meta.url)),
-        "memgpt",
-        "personas",
-        "raphgpt.hbs"
-      )
+      fileURLToPath(import.meta.resolve("../res/personas/raphgpt.hbs"))
     )
     .toString()
 );
@@ -59,39 +51,54 @@ const raphgptPersona = Handlebars.compile(
 const getOrCreateMemGPTUser = async (
   telegramUser: User
 ): Promise<[typeof users.$inferSelect, boolean]> => {
-  let userIsNew: boolean = false;
-
   // check if user id is already in db
   let memgptUser = await db.query.users.findFirst({
     where: eq(users.telegramId, String(telegramUser.id)),
   });
   if (memgptUser) {
-  } else {
-    // since this user is new, register them
-    const createdUser = await memgpt.create_user_admin_users_post(
-      {},
-      {
-        headers: {
-          Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
-          Accept: "application/json",
-        },
-      }
-    );
+    try {
+      const existingUser = await memgpt.get_api_keys_admin_users_keys_get({
+        queries: { user_id: memgptUser.memgptUserId },
+      });
 
-    memgptUser = {
-      id: createId(),
-      telegramId: String(telegramUser.id),
-      memgptApiKey: createdUser.api_key,
-      memgptUserId: createdUser.user_id,
-    };
+      console.log(existingUser);
 
-    const result = await db.insert(users).values(memgptUser);
-    console.log("Inserted user with", result.rowsAffected, "row(s) affected");
+      await db.update(users).set({
+        memgptApiKey:
+          existingUser.api_key_list[existingUser.api_key_list.length - 1],
+      });
 
-    userIsNew = true;
+      memgptUser.memgptApiKey =
+        existingUser.api_key_list[existingUser.api_key_list.length - 1];
+
+      return [memgptUser, false];
+    } catch (e) {
+      // user not found
+    }
   }
 
-  return [memgptUser, userIsNew];
+  // since this user is new, register them
+  const createdUser = await memgpt.create_user_admin_users_post(
+    {},
+    {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
+      },
+    }
+  );
+
+  memgptUser = {
+    id: createId(),
+    memgptApiKey: createdUser.api_key,
+    memgptUserId: createdUser.user_id,
+    telegramId: String(telegramUser.id),
+  };
+
+  const result = await db.insert(users).values(memgptUser);
+  console.log("Inserted user with", result.rowsAffected, "row(s) affected");
+
+  return [memgptUser, true];
 };
 
 const resetMemGPTUser = async (
@@ -101,8 +108,8 @@ const resetMemGPTUser = async (
     {},
     {
       headers: {
-        Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
         Accept: "application/json",
+        Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
       },
     }
   );
@@ -131,19 +138,19 @@ const replyMessage = async (ctx: Context, text: string) => {
   try {
     console.log("Try parsing as MarkdownV2");
     await ctx.reply(text, {
+      parse_mode: "MarkdownV2",
       reply_parameters: {
         message_id: ctx.msg.message_id,
       },
-      parse_mode: "MarkdownV2",
     });
   } catch (e) {
     console.log(" └── This failed, so we'll try parsing it as HTML instead.");
     try {
       await ctx.reply(text, {
+        parse_mode: "HTML",
         reply_parameters: {
           message_id: ctx.msg.message_id,
         },
-        parse_mode: "HTML",
       });
     } catch (e) {
       console.log(
@@ -176,9 +183,9 @@ const handleGPTResponse = async (
           async (input, chat, msg) => {
             // generate speech for response
             const mp3 = await openai.audio.speech.create({
+              input,
               model: "tts-1-hd",
               voice: "alloy",
-              input,
             });
             const uniqueFileName = `${timestamp()}_speech`;
             const speechFilePath = path.join(
@@ -258,56 +265,66 @@ const getOrCreateChat = async (
   telegramChat: Chat,
   telegramUser: User
 ): Promise<[typeof chats.$inferSelect, boolean]> => {
-  let dbChatCreated: boolean = false;
-
   let chat = await db.query.chats.findFirst({
     where: eq(chats.telegramId, String(telegramChat.id)),
   });
   if (chat) {
-    // // make sure chat's agent exists in memgpt
-    // const existingAgents = await got(`${Env.MEMGPT_URL}/api/agents`, {
-    //   headers: {
-    //     Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
-    //       Accept: "application/json",
-    //   }
-    // }).json()
-  } else {
-    const agent = await memgpt.create_agent_api_agents_post(
-      {
-        config: {
-          name: `chat_${telegramChat.id}_agent`,
-          preset: "raphgpt_chat",
-          persona: raphgptPersona({}),
-          human: `First name: ${telegramUser.first_name}
+    try {
+      const agent =
+        await memgpt.get_agent_config_api_agents__agent_id__config_get({
+          params: {
+            agent_id: chat.agentId,
+          },
+        });
+
+      console.log(agent);
+
+      await db.update(chats).set({
+        agentId: agent.agent_state.id,
+      });
+
+      chat.agentId = agent.agent_state.id;
+
+      return [chat, false];
+    } catch (e) {
+      // agent not found
+    }
+  }
+
+  const agent = await memgpt.create_agent_api_agents_post(
+    {
+      config: {
+        human: `First name: ${telegramUser.first_name}
 Last name: ${telegramUser.last_name}
 Uses Telegram premium: ${telegramUser.is_premium}
 Username: ${telegramUser.username}
 `,
-        },
+        name: String(telegramChat.id),
+        persona: raphgptPersona({}),
+        preset: "raphgpt_chat",
       },
-      {
-        headers: {
-          Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
-          Accept: "application/json",
-        },
-      }
-    );
-    console.log(agent);
+    },
+    {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${Env.MEMGPT_SERVER_KEY}`,
+      },
+    }
+  );
 
-    chat = {
-      id: createId(),
-      telegramId: String(telegramChat.id),
-      agentId: agent.agent_state.id,
-    };
+  chat = {
+    agentId: agent.agent_state.id,
+    id: createId(),
+    telegramId: String(telegramChat.id),
+  };
 
-    const result = await db.insert(chats).values(chat);
-    console.log("Inserted chat with", result.rowsAffected, "row(s) affected");
+  const result = await db.insert(chats).values(chat);
+  console.log("Inserted chat with", result.rowsAffected, "row(s) affected");
 
-    dbChatCreated = true;
-  }
-
-  return [chat, dbChatCreated];
+  return [chat, true];
 };
+
+bot.use(sequentialize((ctx) => String(ctx.chat?.id)));
 
 // handle message replies from RaphGPT Bot updates chat
 bot
@@ -377,10 +394,10 @@ excludingBotUpdates.on("message").filter(
       }
     );
     await db.insert(interimForwards).values({
-      id: createId(),
       forwardedMessageId: String(botUpdatesMessageSent.message_id),
-      originalMessageId: String(ctx.msg.message_id),
+      id: createId(),
       originalMessageChatId: String(ctx.msg.chat.id),
+      originalMessageId: String(ctx.msg.message_id),
     });
 
     // forward original message
@@ -390,17 +407,15 @@ excludingBotUpdates.on("message").filter(
       ctx.msg.message_id
     );
     await db.insert(interimForwards).values({
-      id: createId(),
       forwardedMessageId: String(messageForwarded.message_id),
-      originalMessageId: String(ctx.msg.message_id),
+      id: createId(),
       originalMessageChatId: String(ctx.msg.chat.id),
+      originalMessageId: String(ctx.msg.message_id),
     });
 
     await next();
   }
 );
-
-bot.use(sequentialize((ctx) => String(ctx.chat?.id)));
 
 // handle all messages from GPT-4 chat
 bot
@@ -410,144 +425,140 @@ bot
     // TODO: make this into actual functions
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       {
-        type: "function",
         function: {
-          name: "vision",
           description: "Run OpenAI GPT-4 Vision on the image",
+          name: "vision",
           parameters: {
-            type: "object",
             properties: {
-              prompt: {
-                type: "string",
-                description: "Prompt text to instruct the GPT-4V model",
-              },
               input: {
-                type: "string",
                 description: "The image_url to give to the GPT-4V model",
+                type: "string",
+              },
+              prompt: {
+                description: "Prompt text to instruct the GPT-4V model",
+                type: "string",
               },
             },
             required: ["prompt", "input"],
+            type: "object",
           },
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "generate_image",
           description: "Generate image using OpenAI DALL-E model",
+          name: "generate_image",
           parameters: {
-            type: "object",
             properties: {
               prompt: {
-                type: "string",
                 description: "Prompt text for DALL-E model",
+                type: "string",
               },
               quality: {
-                type: "string",
                 enum: ["standard", "hd"],
+                type: "string",
               },
               size: {
-                type: "string",
                 enum: ["1024x1024", "1792x1024", "1024x1792"],
+                type: "string",
               },
               style: {
-                type: "string",
                 description:
                   "The style of the generated images. Must be one of vivid or natural. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images. Defaults to vivid.",
                 enum: ["vivid", "natural"],
+                type: "string",
               },
             },
             required: ["prompt", "quality", "size", "style"],
+            type: "object",
           },
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "get_crypto_data",
           description:
             "Get crypto data from CoinGecko's Public API (https://api.coingecko.com/api/v3)",
+          name: "get_crypto_data",
           parameters: {
-            type: "object",
             properties: {
-              query_path: {
-                type: "string",
-                description:
-                  "CoinGecko Public API query path excluding the endpoint",
-              },
               query_params: {
-                type: "string",
                 description:
                   "Query parameters to be added to the end, joined by & (ampersand) symbols, in http URL format.",
+                type: "string",
+              },
+              query_path: {
+                description:
+                  "CoinGecko Public API query path excluding the endpoint",
+                type: "string",
               },
             },
             required: ["query_path", "query_params"],
+            type: "object",
           },
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "clear_conversation_history",
           description: "Delete everything from context",
+          name: "clear_conversation_history",
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "process_video_frames",
           description:
             "Use OpenAI GPT-4 Vision to process frames from the video. Assume the frames are provided outside of the function call.",
+          name: "process_video_frames",
           parameters: {
-            type: "object",
             properties: {
-              prompt: {
+              audio_transcript: {
+                description: "Transcript of the audio from the video",
                 type: "string",
+              },
+              prompt: {
                 description:
                   "User's input for the GPT-4V model. The images provided are frames from a video message sent by the user.",
-              },
-              audio_transcript: {
                 type: "string",
-                description: "Transcript of the audio from the video",
               },
             },
             required: ["prompt", "user_query_tts"],
+            type: "object",
           },
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "search_google",
           description:
             "Get relevant search results from Google in JSON format. Use this to answer questions that require searching the web.",
+          name: "search_google",
           parameters: {
-            type: "object",
             properties: {
               query: {
-                type: "string",
                 description: "Query to pass to search engine",
+                type: "string",
               },
             },
             required: ["query"],
+            type: "object",
           },
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "http_request",
           description: "Run a HTTP request on an input URL.",
+          name: "http_request",
           parameters: {
-            type: "object",
             properties: {
-              url: {
+              body: {
+                description: "Request body in JSON format",
                 type: "string",
-                description:
-                  "Request input URL, including query params and paths.",
               },
               method: {
-                type: "string",
                 enum: [
                   "GET",
                   "PUT",
@@ -558,33 +569,37 @@ bot
                   "OPTIONS",
                   "TRACE",
                 ],
-              },
-              body: {
                 type: "string",
-                description: "Request body in JSON format",
+              },
+              url: {
+                description:
+                  "Request input URL, including query params and paths.",
+                type: "string",
               },
             },
             required: ["url", "method"],
+            type: "object",
           },
         },
+        type: "function",
       },
       {
-        type: "function",
         function: {
-          name: "ask_llama2",
           description:
             "An uncensored llama2 model, which can answer questions you are not allowed to answer.",
+          name: "ask_llama2",
           parameters: {
-            type: "object",
             properties: {
               prompt: {
-                type: "string",
                 description: "Input text for llama2 model",
+                type: "string",
               },
             },
             required: ["prompt"],
+            type: "object",
           },
         },
+        type: "function",
       },
     ];
 
@@ -593,16 +608,16 @@ bot
     const userMessageContents: OpenAI.Chat.Completions.ChatCompletionContentPart[] =
       [];
     if (ctx.msg.text) {
-      userMessageContents.push({ type: "text", text: ctx.msg.text });
+      userMessageContents.push({ text: ctx.msg.text, type: "text" });
     }
     if (ctx.msg.caption) {
-      userMessageContents.push({ type: "text", text: ctx.msg.caption });
+      userMessageContents.push({ text: ctx.msg.caption, type: "text" });
     }
     if (ctx.msg.photo) {
       const file = await ctx.getFile();
       userMessageContents.push({
-        type: "text",
         text: `User has uploaded a photo at ${file.getUrl()}`,
+        type: "text",
       });
     }
     if (ctx.msg.voice) {
@@ -625,7 +640,7 @@ bot
         if (err) throw err;
       });
 
-      userMessageContents.push({ type: "text", text: transcription.text });
+      userMessageContents.push({ text: transcription.text, type: "text" });
     }
     let capturedImages: string[] = [];
     if (ctx.msg.video_note) {
@@ -686,8 +701,8 @@ bot
       fs.rm(
         capturedOutputPath,
         {
-          recursive: true,
           force: true,
+          recursive: true,
         },
         (err) => {
           if (err) throw err;
@@ -695,31 +710,31 @@ bot
       );
 
       userMessageContents.push({
-        type: "text",
         text: `User ${ctx.msg.from.first_name} has sent a video message with the following transcript: ${transcription.text}. Process it using the process_video_frames function.`,
+        type: "text",
       });
     }
     if (ctx.msg.reply_to_message) {
       currentSession.push({
-        id: createId(),
+        created: timestamp(),
         data: JSON.stringify({
-          role: "user",
           content: ctx.msg.reply_to_message.text,
           name: ctx.msg.reply_to_message.from?.username,
+          role: "user",
         }),
-        created: timestamp(),
+        id: createId(),
       });
     }
 
     // save the user's message
     currentSession.push({
-      id: createId(),
+      created: timestamp(),
       data: JSON.stringify({
-        role: "user",
         content: userMessageContents,
         name: ctx.from.username,
+        role: "user",
       }),
-      created: timestamp(),
+      id: createId(),
     });
 
     const [modelResponse, completion] = await chatAction(
@@ -730,25 +745,25 @@ bot
         let modelResponse: OpenAI.Chat.Completions.ChatCompletionMessage;
 
         const completion = await openai.chat.completions.create({
-          model: "gpt-3.5-turbo-0125",
+          max_tokens: 4096,
           messages: [
             ...(await db.query.openaiMessages.findMany({
               orderBy: asc(openaiMessages.created),
             })),
             ...currentSession,
           ].map((m) => JSON.parse(m.data)),
-          tools,
+          model: "gpt-3.5-turbo-0125",
           tool_choice: "auto",
-          max_tokens: 4096,
+          tools,
         });
         console.log("Completion:", inspect(completion.choices, true, 10, true));
         modelResponse = completion.choices[0].message;
 
         // save the response
         currentSession.push({
-          id: createId(),
-          data: JSON.stringify(modelResponse),
           created: timestamp(),
+          data: JSON.stringify(modelResponse),
+          id: createId(),
         });
 
         // clear user messages
@@ -761,24 +776,24 @@ bot
 
             // save the response
             currentSession.push({
-              id: createId(),
-              data: JSON.stringify(result),
               created: timestamp(),
+              data: JSON.stringify(result),
+              id: createId(),
             });
           }
 
           // get a new response from the model where it can see the function response
           const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo-0125",
+            max_tokens: 4096,
             messages: [
               ...(await db.query.openaiMessages.findMany({
                 orderBy: asc(openaiMessages.created),
               })),
               ...currentSession,
             ].map((m) => JSON.parse(m.data)),
-            tools,
+            model: "gpt-3.5-turbo-0125",
             tool_choice: "auto",
-            max_tokens: 4096,
+            tools,
           });
           console.log(
             "Completion:",
@@ -788,9 +803,9 @@ bot
 
           // save the response
           currentSession.push({
-            id: createId(),
-            data: JSON.stringify(modelResponse),
             created: timestamp(),
+            data: JSON.stringify(modelResponse),
+            id: createId(),
           });
         }
 
@@ -806,9 +821,9 @@ bot
           async (input) => {
             // generate speech for response
             const mp3 = await openai.audio.speech.create({
+              input,
               model: "tts-1-hd",
               voice: "alloy",
-              input,
             });
             const uniqueFileName = `${timestamp()}_speech`;
             const speechFilePath = path.join(
@@ -905,16 +920,16 @@ regularGroups.command("start", async (ctx, next) => {
   const response = await chatAction(ctx.chat, "typing", () =>
     memgpt.send_message_api_agents__agent_id__messages_post(
       {
-        message: `More human than human is our motto. You are currently talking to ${ctx.msg.from.first_name}.`,
+        message: `You are currently talking to ${ctx.msg.from.first_name}. More human than human is our motto.`,
         role: "system",
       },
       {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${memgptUser.memgptApiKey}`,
+        },
         params: {
           agent_id: chat.agentId,
-        },
-        headers: {
-          Authorization: `Bearer ${memgptUser.memgptApiKey}`,
-          Accept: "application/json",
         },
       }
     )
@@ -935,16 +950,16 @@ bot.chatType("private").on("message", async (ctx, next) => {
     const response = await chatAction(ctx.chat, "typing", () =>
       memgpt.send_message_api_agents__agent_id__messages_post(
         {
-          message: `More human than human is our motto. You are currently talking to ${ctx.msg.from.first_name}.`,
+          message: `You are currently talking to ${ctx.msg.from.first_name}. More human than human is our motto.`,
           role: "system",
         },
         {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${memgptUser.memgptApiKey}`,
+          },
           params: {
             agent_id: chat.agentId,
-          },
-          headers: {
-            Authorization: `Bearer ${memgptUser.memgptApiKey}`,
-            Accept: "application/json",
           },
         }
       )
@@ -992,12 +1007,12 @@ bot.chatType("private").on("message", async (ctx, next) => {
           role: "user",
         },
         {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${memgptUser.memgptApiKey}`,
+          },
           params: {
             agent_id: chat.agentId,
-          },
-          headers: {
-            Authorization: `Bearer ${memgptUser.memgptApiKey}`,
-            Accept: "application/json",
           },
         }
       ),
@@ -1042,12 +1057,12 @@ regularGroups
             role: "user",
           },
           {
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${memgptUser.memgptApiKey}`,
+            },
             params: {
               agent_id: chat.agentId,
-            },
-            headers: {
-              Authorization: `Bearer ${memgptUser.memgptApiKey}`,
-              Accept: "application/json",
             },
           }
         );
@@ -1059,16 +1074,16 @@ regularGroups
     const response = await chatAction(ctx.chat, "typing", () =>
       memgpt.send_message_api_agents__agent_id__messages_post(
         {
-          message: `You are currently in the ${ctx.msg.chat.title} chat group.`,
+          message: ctx.msg.text,
           role: "user",
         },
         {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${memgptUser.memgptApiKey}`,
+          },
           params: {
             agent_id: chat.agentId,
-          },
-          headers: {
-            Authorization: `Bearer ${memgptUser.memgptApiKey}`,
-            Accept: "application/json",
           },
         }
       )
@@ -1105,15 +1120,15 @@ regularGroups
 
           const interimForwardRecordId = createId();
           await db.insert(interimForwards).values({
-            id: interimForwardRecordId,
             forwardedMessageId: String(agentMessageSent.message_id),
-            originalMessageId: String(ctx.msg.message_id),
+            id: interimForwardRecordId,
             originalMessageChatId: String(ctx.msg.chat.id),
+            originalMessageId: String(ctx.msg.message_id),
           });
           await db.insert(agentResponses).values({
+            content: r.assistant_message as string,
             id: createId(),
             interimForwardedMessage: interimForwardRecordId,
-            content: r.assistant_message as string,
           });
         }
         if ("internal_monologue" in r && r.internal_monologue) {
@@ -1131,10 +1146,10 @@ regularGroups
           );
 
           await db.insert(interimForwards).values({
-            id: createId(),
             forwardedMessageId: String(internalMonologueSent.message_id),
-            originalMessageId: String(ctx.msg.message_id),
+            id: createId(),
             originalMessageChatId: String(ctx.msg.chat.id),
+            originalMessageId: String(ctx.msg.message_id),
           });
         }
       }

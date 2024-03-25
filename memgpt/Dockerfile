@@ -16,9 +16,6 @@ RUN memgpt quickstart
 
 WORKDIR /root/.memgpt
 
-COPY init/config.ini config
-COPY init/sqlite.db sqlite.db
-
 COPY functions ./functions
 COPY presets ./presets
 

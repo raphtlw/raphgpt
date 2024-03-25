@@ -1,6 +1,6 @@
 import { Api, Context } from "grammy";
 import { Chat } from "grammy/types";
-import { Env } from "./env";
+import { Env } from "secrets/env";
 
 export const chatAction = async <TArgs extends any[], Out>(
   chat: Chat,

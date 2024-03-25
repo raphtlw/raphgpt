@@ -9,7 +9,7 @@
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
     <data-source source="LOCAL" name="memGPT" uuid="2c3cda1c-b82b-4044-a6f0-5868bea06e25">
-      <driver-ref>sqlite.xerial</driver-ref>
+      <driver-ref>65dfef24-3b6a-41e5-a8de-58905a3d8eb8</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
       <jdbc-url>jdbc:sqlite:$PROJECT_DIR$/memgpt/init/sqlite.db</jdbc-url>

@@ -1,17 +1,17 @@
-import OpenAI from "openai";
-import { Env } from "./env";
-import { z } from "zod";
-import { inspect } from "util";
-import { db } from "../db/db";
-import { openaiMessages } from "../db/schema";
-import { createId } from "@paralleldrive/cuid2";
-import { timestamp } from "./time";
-import { code, fmt, underline } from "@grammyjs/parse-mode";
-import { Bot, Context } from "grammy";
-import assert from "assert";
-import got from "got";
-import { asc } from "drizzle-orm";
 import { FileFlavor } from "@grammyjs/files";
+import { code, fmt, underline } from "@grammyjs/parse-mode";
+import { createId } from "@paralleldrive/cuid2";
+import assert from "assert";
+import { timestamp } from "bot/time";
+import { db } from "db/db";
+import { openaiMessages } from "db/schema";
+import { asc } from "drizzle-orm";
+import got from "got";
+import { Bot, Context } from "grammy";
+import OpenAI from "openai";
+import { Env } from "secrets/env";
+import { inspect } from "util";
+import { z } from "zod";
 
 export const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 
@@ -23,30 +23,30 @@ export const handleToolCall = async (
   assert(ctx.chat);
   assert(ctx.msg);
 
-  let response: any;
+  let response: unknown;
 
   if (toolCall.function.name === "vision") {
     const args = z
-      .object({ prompt: z.string(), input: z.string() })
+      .object({ input: z.string(), prompt: z.string() })
       .parse(JSON.parse(toolCall.function.arguments));
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-vision-preview",
+      max_tokens: 2048,
       messages: [
         {
-          role: "user",
           content: [
-            { type: "text", text: args.prompt },
+            { text: args.prompt, type: "text" },
             {
-              type: "image_url",
               image_url: {
                 url: args.input,
               },
+              type: "image_url",
             },
           ],
+          role: "user",
         },
       ],
-      max_tokens: 2048,
+      model: "gpt-4-vision-preview",
     });
     console.log("Completion:", inspect(completion.choices, true, 10, true));
 
@@ -64,9 +64,9 @@ export const handleToolCall = async (
     response = await openai.images.generate({
       model: "dall-e-3",
       prompt: args.prompt,
-      quality: args.quality as any,
-      size: args.size as any,
-      style: args.style as any,
+      quality: args.quality as never,
+      size: args.size as never,
+      style: args.style as never,
     });
     console.log("DALL-E Generation:", inspect(response, true, 10, true));
 
@@ -93,7 +93,7 @@ export const handleToolCall = async (
     // }
   } else if (toolCall.function.name === "get_crypto_data") {
     const args = z
-      .object({ query_path: z.string(), query_params: z.string() })
+      .object({ query_params: z.string(), query_path: z.string() })
       .parse(JSON.parse(toolCall.function.arguments));
 
     response = await got(
@@ -106,34 +106,34 @@ export const handleToolCall = async (
     response = result.toJSON();
   } else if (toolCall.function.name === "process_video_frames") {
     const args = z
-      .object({ prompt: z.string(), audio_transcript: z.string() })
+      .object({ audio_transcript: z.string(), prompt: z.string() })
       .parse(JSON.parse(toolCall.function.arguments));
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-vision-preview",
+      max_tokens: 2048,
       messages: [
         {
-          role: "user",
           content: [
-            { type: "text", text: args.prompt },
+            { text: args.prompt, type: "text" },
             {
+              text: "The images below shows video frames in sequence. Act as if you were a person, and describe what's likely going on in each frame.",
               type: "text",
-              text: "The images below shows video frames in sequence. Describe what's likely going on in each frame.",
             },
             {
-              type: "text",
               text: `You can hear following in the audio track: ${args.audio_transcript}`,
+              type: "text",
             },
             ...(capturedImages.map((b64) => ({
-              type: "image_url",
               image_url: {
                 url: `data:image/jpeg;base64,${b64}`,
               },
+              type: "image_url",
             })) as any),
           ],
+          role: "user",
         },
       ],
-      max_tokens: 2048,
+      model: "gpt-4-vision-preview",
     });
     console.log("Completion:", inspect(completion.choices, true, 10, true));
 
@@ -149,22 +149,22 @@ export const handleToolCall = async (
     console.log("Google Search Response:", inspect(res, true, 10, true));
 
     response = res.items.map((item) => ({
-      title: item.title,
       link: item.link,
       snippet: item.snippet,
+      title: item.title,
     }));
   } else if (toolCall.function.name === "http_request") {
     const args = z
       .object({
-        url: z.string(),
-        method: z.string(),
         body: z.string().optional(),
+        method: z.string(),
+        url: z.string(),
       })
       .parse(JSON.parse(toolCall.function.arguments));
 
     response = await got(args.url, {
-      method: args.method as any,
       body: args.body,
+      method: args.method as never,
     }).json();
     console.log(args.url, "HTTP Response:", inspect(response, true, 10, true));
   } else if (toolCall.function.name === "ask_llama2") {
@@ -192,9 +192,9 @@ export const handleToolCall = async (
   }
 
   return {
-    tool_call_id: toolCall.id,
-    role: "tool",
-    name: toolCall.function.name,
     content: JSON.stringify(response),
+    name: toolCall.function.name,
+    role: "tool",
+    tool_call_id: toolCall.id,
   };
 };

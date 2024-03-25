@@ -2,9 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx main.ts",
-    "dev": "tsx watch main.ts",
-    "db:push": "drizzle-kit push:sqlite"
+    "bot:start": "tsx bot/main.ts",
+    "bot:dev": "tsx watch bot/main.ts",
+    "db:push": "drizzle-kit push:sqlite",
+    "lint": "eslint . && prettier . --check",
+    "lint:fix": "eslint . --fix && prettier . --write"
   },
   "dependencies": {
     "@grammyjs/files": "^1.1.0",
@@ -30,7 +32,14 @@
     "@tsconfig/node21": "^21.0.1",
     "@types/fluent-ffmpeg": "^2.1.24",
     "@types/node": "^20.11.25",
+    "@typescript-eslint/eslint-plugin": "^7.3.1",
+    "@typescript-eslint/parser": "^7.3.1",
     "drizzle-kit": "^0.20.14",
-    "openapi-zod-client": "^1.16.2"
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-no-relative-import-paths": "^1.5.3",
+    "eslint-plugin-perfectionist": "^2.7.0",
+    "openapi-zod-client": "^1.16.2",
+    "prettier": "^3.2.5"
   }
 }
