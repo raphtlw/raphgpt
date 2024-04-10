@@ -23,6 +23,16 @@ export const messages = sqliteTable("messages", {
     .$defaultFn(() => timestamp()),
 });
 
+export const openaiMessages = sqliteTable("openai_messages", {
+  id: text("id").primaryKey(),
+  telegramChatId: text("telegram_chat_id").notNull(),
+  telegramThreadId: text("telegram_thread_id"),
+  json: text("json").notNull(),
+  created: int("created")
+    .notNull()
+    .$default(() => timestamp()),
+});
+
 // export const messagesRelations = relations(messages, ({ one }) => ({
 //   chat: one(chats, {
 //     fields: [messages.chatId],

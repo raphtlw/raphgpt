@@ -1,22 +1,40 @@
+import { autoRetry } from "@grammyjs/auto-retry";
 import { FileFlavor, hydrateFiles } from "@grammyjs/files";
 import { fmt, pre } from "@grammyjs/parse-mode";
 import { run, sequentialize } from "@grammyjs/runner";
 import { createId } from "@paralleldrive/cuid2";
+import {
+  Conversation,
+  DraftMessage,
+  describeVideo,
+  message,
+  runModel,
+  transcribeAudio,
+} from "ai";
 import assert from "assert";
+import { Command } from "bot/command";
+import { debugPrint } from "bot/debug";
+import { sendMultimodalMessage } from "bot/message";
+import { chatAction } from "bot/tasks";
+import { timestamp } from "bot/time";
 import { db } from "db";
-import { messages } from "db/schema";
+import { messages, openaiMessages } from "db/schema";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import fs from "fs";
-import { Bot, Context, GrammyError, HttpError } from "grammy";
+import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
+import { joinImages } from "join-images";
+import { OpenAIChatApi } from "llm-api";
 import ollama from "ollama";
 import OpenAI from "openai";
 import path from "path";
 import { Env } from "secrets/env";
 import { inspect } from "util";
+import { z } from "zod";
+import zodGPT from "zod-gpt";
 
 const bot = new Bot<FileFlavor<Context>>(Env.TELEGRAM_API_KEY);
-const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 
+bot.api.config.use(autoRetry());
 bot.api.config.use(hydrateFiles(bot.token));
 
 bot.use(sequentialize((ctx) => String(ctx.chat?.id)));
@@ -47,7 +65,7 @@ bot
       const message = await db.query.messages.findFirst({
         where: eq(
           messages.telegramId,
-          String(ctx.msg.reply_to_message.message_id)
+          String(ctx.msg.reply_to_message.message_id),
         ),
       });
 
@@ -61,7 +79,7 @@ bot
       }
 
       await next();
-    }
+    },
   );
 
 const excludingBotUpdates = bot
@@ -72,8 +90,11 @@ const regularGroups = bot
   .on("message")
   .filter(
     (ctx) =>
-      ctx.chat.id !== Number(Env.TELEGRAM_BOT_UPDATES_CHAT_ID) &&
-      ctx.chat.id !== Number(Env.TELEGRAM_GPT4_CHAT_ID)
+      ![
+        Env.TELEGRAM_BOT_UPDATES_CHAT_ID,
+        Env.TELEGRAM_OPENAI_CHAT_ID,
+        Env.TELEGRAM_GPT4_CHAT_ID,
+      ].includes(ctx.chat.id.toString()),
   );
 
 // on every message, except messages sent to bot updates
@@ -114,7 +135,7 @@ excludingBotUpdates.on("message", async (ctx, next) => {
     botUpdatesMessage.text,
     {
       entities: botUpdatesMessage.entities,
-    }
+    },
   );
   await db.insert(messages).values({
     id: createId(),
@@ -129,7 +150,7 @@ excludingBotUpdates.on("message", async (ctx, next) => {
   const messageForwarded = await bot.api.forwardMessage(
     Env.TELEGRAM_BOT_UPDATES_CHAT_ID,
     ctx.msg.chat.id,
-    ctx.msg.message_id
+    ctx.msg.message_id,
   );
   await db.insert(messages).values({
     id: createId(),
@@ -145,511 +166,335 @@ excludingBotUpdates.on("message", async (ctx, next) => {
   await next();
 });
 
-// handle all messages from GPT-4 chat
-// bot
-//   .chatType(["group", "supergroup"])
-//   .filter((ctx) => ctx.chat.id === Number(Env.TELEGRAM_GPT4_CHAT_ID))
-//   .on("message", async (ctx, next) => {
-//     // TODO: make this into actual functions
-//     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
-//       {
-//         function: {
-//           description: "Run OpenAI GPT-4 Vision on the image",
-//           name: "vision",
-//           parameters: {
-//             properties: {
-//               input: {
-//                 description: "The image_url to give to the GPT-4V model",
-//                 type: "string",
-//               },
-//               prompt: {
-//                 description: "Prompt text to instruct the GPT-4V model",
-//                 type: "string",
-//               },
-//             },
-//             required: ["prompt", "input"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description: "Generate image using OpenAI DALL-E model",
-//           name: "generate_image",
-//           parameters: {
-//             properties: {
-//               prompt: {
-//                 description: "Prompt text for DALL-E model",
-//                 type: "string",
-//               },
-//               quality: {
-//                 enum: ["standard", "hd"],
-//                 type: "string",
-//               },
-//               size: {
-//                 enum: ["1024x1024", "1792x1024", "1024x1792"],
-//                 type: "string",
-//               },
-//               style: {
-//                 description:
-//                   "The style of the generated images. Must be one of vivid or natural. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images. Defaults to vivid.",
-//                 enum: ["vivid", "natural"],
-//                 type: "string",
-//               },
-//             },
-//             required: ["prompt", "quality", "size", "style"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description:
-//             "Get crypto data from CoinGecko's Public API (https://api.coingecko.com/api/v3)",
-//           name: "get_crypto_data",
-//           parameters: {
-//             properties: {
-//               query_params: {
-//                 description:
-//                   "Query parameters to be added to the end, joined by & (ampersand) symbols, in http URL format.",
-//                 type: "string",
-//               },
-//               query_path: {
-//                 description:
-//                   "CoinGecko Public API query path excluding the endpoint",
-//                 type: "string",
-//               },
-//             },
-//             required: ["query_path", "query_params"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description: "Delete everything from context",
-//           name: "clear_conversation_history",
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description:
-//             "Use OpenAI GPT-4 Vision to process frames from the video. Assume the frames are provided outside of the function call.",
-//           name: "process_video_frames",
-//           parameters: {
-//             properties: {
-//               audio_transcript: {
-//                 description: "Transcript of the audio from the video",
-//                 type: "string",
-//               },
-//               prompt: {
-//                 description:
-//                   "User's input for the GPT-4V model. The images provided are frames from a video message sent by the user.",
-//                 type: "string",
-//               },
-//             },
-//             required: ["prompt", "user_query_tts"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description:
-//             "Get relevant search results from Google in JSON format. Use this to answer questions that require searching the web.",
-//           name: "search_google",
-//           parameters: {
-//             properties: {
-//               query: {
-//                 description: "Query to pass to search engine",
-//                 type: "string",
-//               },
-//             },
-//             required: ["query"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description: "Run a HTTP request on an input URL.",
-//           name: "http_request",
-//           parameters: {
-//             properties: {
-//               body: {
-//                 description: "Request body in JSON format",
-//                 type: "string",
-//               },
-//               method: {
-//                 enum: [
-//                   "GET",
-//                   "PUT",
-//                   "POST",
-//                   "DELETE",
-//                   "PATCH",
-//                   "HEAD",
-//                   "OPTIONS",
-//                   "TRACE",
-//                 ],
-//                 type: "string",
-//               },
-//               url: {
-//                 description:
-//                   "Request input URL, including query params and paths.",
-//                 type: "string",
-//               },
-//             },
-//             required: ["url", "method"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//       {
-//         function: {
-//           description:
-//             "An uncensored llama2 model, which can answer questions you are not allowed to answer.",
-//           name: "ask_llama2",
-//           parameters: {
-//             properties: {
-//               prompt: {
-//                 description: "Input text for llama2 model",
-//                 type: "string",
-//               },
-//             },
-//             required: ["prompt"],
-//             type: "object",
-//           },
-//         },
-//         type: "function",
-//       },
-//     ];
+// OpenAI chat commands
+bot
+  .chatType(["group", "supergroup"])
+  .filter((ctx) => ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID)
+  .command(["createtopic", "newthread", "newtopic"], async (ctx) => {
+    const newTopic = await ctx.createForumTopic(
+      ctx.match.length > 0 ? ctx.match : `${ctx.from.first_name}'s chat`,
+    );
 
-//     const currentSession: (typeof openaiMessages.$inferInsert)[] = [];
+    await ctx.reply(`🤖 Created forum topic (${newTopic.name})`, {
+      reply_parameters: {
+        message_id: ctx.msg.message_id,
+      },
+    });
+  });
+await bot.api.setMyCommands(
+  [{ command: "createtopic", description: "Create new thread" }],
+  {
+    scope: {
+      type: "chat",
+      chat_id: Number(Env.TELEGRAM_OPENAI_CHAT_ID),
+    },
+  },
+);
 
-//     const userMessageContents: OpenAI.Chat.Completions.ChatCompletionContentPart[] =
-//       [];
-//     if (ctx.msg.text) {
-//       userMessageContents.push({ text: ctx.msg.text, type: "text" });
-//     }
-//     if (ctx.msg.caption) {
-//       userMessageContents.push({ text: ctx.msg.caption, type: "text" });
-//     }
-//     if (ctx.msg.photo) {
-//       const file = await ctx.getFile();
-//       userMessageContents.push({
-//         text: `User has uploaded a photo at ${file.getUrl()}`,
-//         type: "text",
-//       });
-//     }
-//     if (ctx.msg.voice) {
-//       // transcribe voice
-//       const file = await ctx.getFile();
-//       const downloadedFilePath = await file.download();
-//       const filePath = downloadedFilePath + ".ogg";
-//       fs.renameSync(downloadedFilePath, filePath);
-//       const transcription = await openai.audio.transcriptions.create({
-//         file: fs.createReadStream(filePath),
-//         model: "whisper-1",
-//       });
+// handle all messages from OpenAI related chats
+bot
+  .chatType(["group", "supergroup"])
+  .filter((ctx) =>
+    [Env.TELEGRAM_OPENAI_CHAT_ID, Env.TELEGRAM_GPT4_CHAT_ID].includes(
+      ctx.chat.id.toString(),
+    ),
+  )
+  .on("message", async (ctx, next) => {
+    const draft = new DraftMessage();
 
-//       console.log(
-//         "Transcription of voice message by OpenAI:",
-//         transcription.text
-//       );
+    // get cached message
+    const cachedMessage = await db.query.messages.findFirst({
+      where: eq(messages.telegramId, ctx.msg.message_id.toString()),
+    });
+    assert(cachedMessage);
 
-//       fs.unlink(filePath, (err) => {
-//         if (err) throw err;
-//       });
+    if (ctx.msg.text) {
+      draft.add({
+        type: "text",
+        text: ctx.msg.text,
+      });
+    }
+    if (ctx.msg.photo) {
+      const file = await ctx.getFile();
+      draft.add({
+        type: "text",
+        text: `User has uploaded a photo at ${file.getUrl()}`,
+      });
+    }
+    if (ctx.msg.caption) {
+      draft.add({
+        type: "text",
+        text: ctx.msg.caption,
+      });
+    }
+    if (ctx.msg.voice) {
+      // Transcribe voice message
+      assert(cachedMessage.file);
 
-//       userMessageContents.push({ text: transcription.text, type: "text" });
-//     }
-//     let capturedImages: string[] = [];
-//     if (ctx.msg.video_note) {
-//       // seperate audio and video
-//       const file = await ctx.getFile();
-//       const downloadedFilePath = await file.download();
-//       const filePath = downloadedFilePath + ".mp4";
-//       fs.renameSync(downloadedFilePath, filePath);
-//       const audioOutputPath = path.join(
-//         process.cwd(),
-//         `${ctx.msg.video_note.file_unique_id}.mp3`
-//       );
-//       const capturedOutputPath = path.join(
-//         process.cwd(),
-//         `${ctx.msg.video_note.file_unique_id}.capture`
-//       );
-//       await new Promise<void>((resolve, reject) => {
-//         ffmpeg(filePath)
-//           .noVideo()
-//           .format("mp3")
-//           .save(audioOutputPath)
-//           .on("end", () => resolve())
-//           .on("error", reject);
-//       });
-//       await new Promise<void>((resolve, reject) => {
-//         ffmpeg(filePath)
-//           .thumbnails({
-//             count: ctx.msg.video_note!.duration * 4, // read x frames per second
-//             folder: capturedOutputPath,
-//             size: "512x512",
-//           })
-//           .on("end", () => resolve())
-//           .on("error", reject);
-//       });
+      const transcription = await transcribeAudio(
+        path.join("data", "file", cachedMessage.file),
+      );
 
-//       const transcription = await openai.audio.transcriptions.create({
-//         file: fs.createReadStream(audioOutputPath),
-//         model: "whisper-1",
-//       });
+      draft.add({
+        type: "text",
+        text: transcription,
+      });
+    }
+    if (ctx.msg.video_note) {
+      // Process frames from video
+      // Get transcript from video
 
-//       console.log(
-//         "Transcription of voice message by OpenAI:",
-//         transcription.text
-//       );
+      const message = await db.query.messages.findFirst({
+        columns: {
+          file: true,
+          contextData: true,
+        },
+        where: and(
+          isNotNull(messages.file),
+          eq(messages.telegramId, ctx.msg.message_id.toString()),
+        ),
+      });
+      assert(message);
+      assert(message.file);
 
-//       capturedImages = fs.readdirSync(capturedOutputPath).map((filepath) =>
-//         fs.readFileSync(path.join(capturedOutputPath, filepath), {
-//           encoding: "base64",
-//         })
-//       );
+      const receivedFilePath = path.join("data", "file", message.file);
 
-//       fs.unlink(filePath, (err) => {
-//         if (err) throw err;
-//       });
-//       fs.unlink(audioOutputPath, (err) => {
-//         if (err) throw err;
-//       });
-//       fs.rm(
-//         capturedOutputPath,
-//         {
-//           force: true,
-//           recursive: true,
-//         },
-//         (err) => {
-//           if (err) throw err;
-//         }
-//       );
+      const audioOutputPath = path.join(
+        process.cwd(),
+        `${ctx.msg.video_note.file_unique_id}.mp3`,
+      );
+      const framesOutputPath = path.join(
+        process.cwd(),
+        `${ctx.msg.video_note.file_unique_id}.capture`,
+      );
+      const stitchedFramesOutputPath = path.join(
+        process.cwd(),
+        `${ctx.msg.video_note.file_unique_id}.png`,
+      );
 
-//       userMessageContents.push({
-//         text: `User ${ctx.msg.from.first_name} has sent a video message with the following transcript: ${transcription.text}. Process it using the process_video_frames function.`,
-//         type: "text",
-//       });
-//     }
-//     if (ctx.msg.reply_to_message) {
-//       currentSession.push({
-//         created: timestamp(),
-//         data: JSON.stringify({
-//           content: ctx.msg.reply_to_message.text,
-//           name: ctx.msg.reply_to_message.from?.username,
-//           role: "user",
-//         }),
-//         id: createId(),
-//       });
-//     }
+      const extractAudioCommand = await Command(
+        `ffmpeg -i "${receivedFilePath}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
+      ).run();
+      console.log(extractAudioCommand);
 
-//     // save the user's message
-//     currentSession.push({
-//       created: timestamp(),
-//       data: JSON.stringify({
-//         content: userMessageContents,
-//         name: ctx.from.username,
-//         role: "user",
-//       }),
-//       id: createId(),
-//     });
+      // create transcription
+      const transcription = await transcribeAudio(audioOutputPath);
 
-//     const [modelResponse, completion] = await chatAction(
-//       ctx.chat,
-//       "typing",
-//       async () => {
-//         // final model response
-//         let modelResponse: OpenAI.Chat.Completions.ChatCompletionMessage;
+      // extract frames
+      await fs.promises.mkdir(framesOutputPath);
+      const extractFramesCommand = await Command(
+        `ffmpeg -i ${receivedFilePath} -vf fps=4 ${framesOutputPath}/%d.png`,
+      ).run();
+      console.log(extractFramesCommand);
 
-//         const completion = await openai.chat.completions.create({
-//           max_tokens: 4096,
-//           messages: [
-//             ...(await db.query.openaiMessages.findMany({
-//               orderBy: asc(openaiMessages.created),
-//             })),
-//             ...currentSession,
-//           ].map((m) => JSON.parse(m.data)),
-//           model: "gpt-3.5-turbo-0125",
-//           tool_choice: "auto",
-//           tools,
-//         });
-//         console.log("Completion:", inspect(completion.choices, true, 10, true));
-//         modelResponse = completion.choices[0].message;
+      // stitch frames together
+      const videoFramePaths = await fs.promises
+        .readdir(framesOutputPath)
+        .then((filenames) =>
+          filenames.map((filename) => path.join(framesOutputPath, filename)),
+        );
+      const stitchedFrames = await joinImages(videoFramePaths, {
+        direction: "horizontal",
+      });
+      await stitchedFrames.toFile(stitchedFramesOutputPath);
+      const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
+        encoding: "base64",
+      });
 
-//         // save the response
-//         currentSession.push({
-//           created: timestamp(),
-//           data: JSON.stringify(modelResponse),
-//           id: createId(),
-//         });
+      // delete temp folders
+      await Promise.all([
+        fs.promises.rm(audioOutputPath),
+        fs.promises.rm(framesOutputPath, { force: true, recursive: true }),
+        fs.promises.rm(stitchedFramesOutputPath),
+      ]);
 
-//         // clear user messages
-//         userMessageContents.length = 0;
+      // ask GPT-4 to describe video, with audio transcript
+      const description = await describeVideo(transcription, [framestrip]);
 
-//         // check if the model wanted to call a function
-//         if (modelResponse.tool_calls) {
-//           for (const toolCall of modelResponse.tool_calls) {
-//             const result = await handleToolCall(toolCall, ctx, capturedImages);
+      draft.add({
+        type: "text",
+        text: "User has uploaded a video with the following contents:",
+      });
+      draft.add({ type: "text", text: description! });
+      draft.add({ type: "text", text: "and the following transcription:" });
+      draft.add({ type: "text", text: transcription });
+      draft.add({
+        type: "text",
+        text: "Respond to the transcription and the video contents.",
+      });
+    }
 
-//             // save the response
-//             currentSession.push({
-//               created: timestamp(),
-//               data: JSON.stringify(result),
-//               id: createId(),
-//             });
-//           }
+    // store thread ID here
+    let messageThreadId: string | undefined =
+      ctx.msg.message_thread_id?.toString();
 
-//           // get a new response from the model where it can see the function response
-//           const completion = await openai.chat.completions.create({
-//             max_tokens: 4096,
-//             messages: [
-//               ...(await db.query.openaiMessages.findMany({
-//                 orderBy: asc(openaiMessages.created),
-//               })),
-//               ...currentSession,
-//             ].map((m) => JSON.parse(m.data)),
-//             model: "gpt-3.5-turbo-0125",
-//             tool_choice: "auto",
-//             tools,
-//           });
-//           console.log(
-//             "Completion:",
-//             inspect(completion.choices, true, 10, true)
-//           );
-//           modelResponse = completion.choices[0].message;
+    // if message has no thread, create one (in OpenAI chat)
+    if (
+      !messageThreadId &&
+      ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+    ) {
+      const newTopic = await ctx.createForumTopic("New chat");
+      messageThreadId = newTopic.message_thread_id.toString();
+    }
 
-//           // save the response
-//           currentSession.push({
-//             created: timestamp(),
-//             data: JSON.stringify(modelResponse),
-//             id: createId(),
-//           });
-//         }
+    const messageHistory = await db.query.openaiMessages.findMany({
+      where: and(
+        eq(openaiMessages.telegramChatId, ctx.chat.id.toString()),
+        messageThreadId
+          ? eq(openaiMessages.telegramThreadId, messageThreadId)
+          : undefined,
+      ),
+      orderBy: asc(openaiMessages.created),
+    });
 
-//         return [modelResponse, completion];
-//       }
-//     );
+    let history = new Conversation(
+      messageHistory.map((msg) => JSON.parse(msg.json)),
+    );
 
-//     if (modelResponse.content && modelResponse.content.length > 0) {
-//       if (ctx.msg.voice || ctx.msg.video_note) {
-//         await chatAction(
-//           ctx.chat,
-//           "record_voice",
-//           async (input) => {
-//             // generate speech for response
-//             const mp3 = await openai.audio.speech.create({
-//               input,
-//               model: "tts-1-hd",
-//               voice: "alloy",
-//             });
-//             const uniqueFileName = `${timestamp()}_speech`;
-//             const speechFilePath = path.join(
-//               process.cwd(),
-//               `${uniqueFileName}.mp3`
-//             );
-//             const processedSpeechFilePath = path.join(
-//               process.cwd(),
-//               `${uniqueFileName}_processed.mp3`
-//             );
-//             await fs.promises.writeFile(
-//               speechFilePath,
-//               Buffer.from(await mp3.arrayBuffer())
-//             );
-//             await new Promise<void>((resolve, reject) => {
-//               ffmpeg(speechFilePath)
-//                 .audioFilters(["volume=4dB"])
-//                 .save(processedSpeechFilePath)
-//                 .on("end", () => resolve())
-//                 .on("error", reject);
-//             });
-//             await bot.api.sendVoice(
-//               ctx.chat.id,
-//               new InputFile(fs.createReadStream(processedSpeechFilePath)),
-//               {
-//                 reply_parameters: {
-//                   message_id: ctx.msg.message_id,
-//                 },
-//               }
-//             );
+    if (ctx.chat.id.toString() === Env.TELEGRAM_GPT4_CHAT_ID) {
+      history = history.takeLast(10);
+    }
 
-//             await fs.promises.unlink(speechFilePath);
-//             await fs.promises.unlink(processedSpeechFilePath);
-//           },
-//           modelResponse.content
-//         );
+    const conversation = new Conversation();
 
-//         if (ctx.msg.video_note) {
-//           await replyMessage(ctx, modelResponse.content);
-//         }
-//       } else {
-//         await replyMessage(ctx, modelResponse.content);
-//       }
+    conversation.add(draft.get());
 
-//       // write session to disk
-//       await db.insert(openaiMessages).values(currentSession);
+    const response = await chatAction(ctx.chat, "typing", async () => {
+      let response = await runModel(history, conversation);
+      if (response.role === "tool") {
+        response = await runModel(history, conversation);
+      }
 
-//       const botUpdatesCompletionNotification = fmt([
-//         underline("RaphGPT (GPT-4) Completion"),
-//         "\n",
-//         "Usage: ",
-//         code(
-//           completion.usage
-//             ? JSON.stringify(completion.usage, undefined, 2)
-//             : "NONE SPECIFIED"
-//         ),
-//         "\n",
-//         "System Fingerprint: ",
-//         code(completion.system_fingerprint ?? "NONE SPECIFIED"),
-//         "\n",
-//         "Model: ",
-//         code(completion.model),
-//       ]);
-//       await bot.api.sendMessage(
-//         Env.TELEGRAM_BOT_UPDATES_CHAT_ID,
-//         botUpdatesCompletionNotification.text,
-//         {
-//           entities: botUpdatesCompletionNotification.entities,
-//         }
-//       );
+      console.log("History:", inspect(history, true, 10, true));
+      console.log("Conversation:", inspect(conversation, true, 10, true));
 
-//       const botUpdatesMessageNotification = fmt([
-//         "Bot reply" + "\n",
-//         blockquote(modelResponse.content),
-//       ]);
-//       await bot.api.sendMessage(
-//         Env.TELEGRAM_BOT_UPDATES_CHAT_ID,
-//         botUpdatesMessageNotification.text,
-//         {
-//           entities: botUpdatesMessageNotification.entities,
-//         }
-//       );
-//     } else {
-//       await replyMessage(ctx, "No message content found.");
-//     }
+      return response;
+    });
 
-//     await next();
-//   });
+    const responseContent = message(response).getCombinedContent()!;
+
+    if (ctx.msg.voice || ctx.msg.video_note) {
+      await chatAction(
+        ctx.chat,
+        "record_voice",
+        async (input) => {
+          const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
+
+          // generate speech for response
+          const mp3 = await openai.audio.speech.create({
+            input,
+            model: "tts-1-hd",
+            voice: "alloy",
+          });
+          const uniqueFileName = `${timestamp()}_speech`;
+          const speechFilePath = path.join(
+            process.cwd(),
+            `${uniqueFileName}.mp3`,
+          );
+          const processedSpeechFilePath = path.join(
+            process.cwd(),
+            `${uniqueFileName}_processed.mp3`,
+          );
+
+          await fs.promises.writeFile(
+            speechFilePath,
+            Buffer.from(await mp3.arrayBuffer()),
+          );
+          const boostVolumeCommand = await Command(
+            `ffmpeg -i "${speechFilePath}" -filter:a "volume=4dB" ${processedSpeechFilePath}`,
+          ).run();
+          console.log(boostVolumeCommand);
+
+          await ctx.replyWithVoice(
+            new InputFile(fs.createReadStream(processedSpeechFilePath)),
+            {
+              message_thread_id:
+                ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+                  ? Number(messageThreadId)
+                  : undefined,
+              reply_parameters: {
+                chat_id: ctx.chat.id,
+                message_id: ctx.msg.message_id,
+                allow_sending_without_reply: true,
+              },
+            },
+          );
+
+          await fs.promises.unlink(speechFilePath);
+          await fs.promises.unlink(processedSpeechFilePath);
+        },
+        responseContent,
+      );
+    }
+
+    await sendMultimodalMessage(ctx.chat.id, responseContent, {
+      message_thread_id:
+        ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+          ? Number(messageThreadId)
+          : undefined,
+      reply_parameters: {
+        chat_id: ctx.chat.id,
+        message_id: ctx.msg.message_id,
+        allow_sending_without_reply: true,
+      },
+    });
+
+    // START topic renaming
+    if (ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID) {
+      // check if message is part of the topic created
+      // then assign a good name for the topic
+      if (messageHistory.length === 0) {
+        const openai = new OpenAIChatApi(
+          { apiKey: Env.OPENAI_API_KEY },
+          {
+            model: "gpt-3.5-turbo",
+          },
+        );
+        const response = await zodGPT.completion(
+          openai,
+          [
+            JSON.stringify(conversation.get()),
+            "Summarize the conversation in 6 words or fewer",
+          ].join("\n"),
+          {
+            schema: z.object({
+              title: z
+                .string()
+                .describe(
+                  "Summarization which best describes the chat's contents",
+                ),
+            }),
+          },
+        );
+        debugPrint(response);
+        await bot.api.editForumTopic(ctx.chat.id, Number(messageThreadId), {
+          name: response.data.title,
+        });
+      }
+    }
+    // END topic rename
+
+    await db.insert(openaiMessages).values(
+      conversation.get().map((msg) => ({
+        id: createId(),
+        telegramChatId: ctx.chat.id.toString(),
+        telegramThreadId: messageThreadId,
+        json: JSON.stringify(msg),
+      })),
+    );
+
+    await next();
+  });
 
 regularGroups.command("start", async (ctx, next) => {
   await next();
 });
 
-regularGroups.chatType("private").on("message", async (ctx, next) => {
+bot.chatType("private").on("message", async (ctx, next) => {
   const fullConversation = await db.query.messages.findMany({
     where: and(
       eq(messages.telegramChatId, ctx.chat.id.toString()),
-      isNotNull(messages.text)
+      isNotNull(messages.text),
     ),
     orderBy: asc(messages.created),
   });
@@ -684,57 +529,31 @@ regularGroups.chatType("private").on("message", async (ctx, next) => {
   await next();
 });
 
-regularGroups
-  .chatType(["group", "supergroup"])
-  .on("message:entities:mention")
-  .branch(
-    (ctx) =>
-      ctx
-        .entities("mention")
-        .findIndex((entity) => entity.text === "@raphgptbot") > -1,
-    async (ctx, next) => {
-      await next();
-    },
-    async (ctx, next) => {
-      await next();
-    }
-  );
-
-regularGroups
-  .chatType(["group", "supergroup"])
-  .on("message", async (ctx, next) => {});
-
-// bot.callbackQuery("send-agent-message-to-group", async (ctx, next) => {
-//   assert(ctx.callbackQuery.message);
-
-//   const interimForwarded = await db.query.interimForwards.findFirst({
-//     where: eq(
-//       interimForwards.forwardedMessageId,
-//       String(ctx.callbackQuery.message.message_id)
-//     ),
-//   });
-//   assert(interimForwarded);
-//   const agentMessages = await db.query.agentResponses.findFirst({
-//     where: eq(agentResponses.interimForwardedMessage, interimForwarded.id),
-//   });
-//   assert(agentMessages);
-
-//   await bot.api.sendChatAction(
-//     interimForwarded.originalMessageChatId,
-//     "typing"
-//   );
-//   await bot.api.sendMessage(
-//     interimForwarded.originalMessageChatId,
-//     agentMessages.content,
-//     {
-//       reply_parameters: {
-//         message_id: Number(interimForwarded.originalMessageId),
-//       },
+// regularGroups
+//   .chatType(["group", "supergroup"])
+//   .on("message:entities:mention")
+//   .branch(
+//     (ctx) =>
+//       ctx
+//         .entities("mention")
+//         .findIndex((entity) => entity.text === "@raphgptbot") > -1,
+//     async (ctx, next) => {
+//       await next();
+//     },
+//     async (ctx, next) => {
+//       await next();
 //     }
 //   );
 
-//   await next();
-// });
+// regularGroups
+//   .chatType(["group", "supergroup"])
+//   .on("message", async (ctx, next) => {
+//     await next();
+//   });
+
+await bot.api.setMyCommands([
+  { command: "start", description: "Start the bot" },
+]);
 
 bot.catch((err) => {
   const ctx = err.ctx;

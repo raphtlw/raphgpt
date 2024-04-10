@@ -1,8 +1,8 @@
-import { Api, Context } from "grammy";
+import { Api } from "grammy";
 import { Chat } from "grammy/types";
 import { Env } from "secrets/env";
 
-export const chatAction = async <TArgs extends any[], Out>(
+export const chatAction = async <TArgs extends unknown[], Out>(
   chat: Chat,
   action: Parameters<Api["sendChatAction"]>[1],
   task: (...args: TArgs) => Promise<Out>,
