@@ -7,7 +7,7 @@ import { Api } from "grammy";
 import Jimp from "jimp";
 import OpenAI from "openai";
 import { Env } from "secrets/env";
-import { get_encoding, encoding_for_model } from "tiktoken";
+import { encoding_for_model } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
 
