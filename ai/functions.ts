@@ -1,6 +1,7 @@
 import { fmt, italic } from "@grammyjs/parse-mode";
 import decodeQR from "@paulmillr/qr/decode";
 import { hyper, hyperStore } from "ai/hyper";
+import fs from "fs";
 import got from "got";
 import { Api } from "grammy";
 import Jimp from "jimp";
@@ -17,8 +18,15 @@ export const functions = hyperStore({
     args: {
       input: z.string().describe("The image_url to give to the GPT-4V model"),
       prompt: z.string().describe("Prompt text to instruct the GPT-4V model"),
+      is_local: z.boolean().describe("true if image is uploaded locally"),
     },
-    async handler({ input, prompt }) {
+    async handler({ input, prompt, is_local }) {
+      let url = input;
+      if (is_local) {
+        url = await fs.promises.readFile(input, { encoding: "base64" });
+        url = `data:image/png;base64,${url}`;
+      }
+
       const completion = await openai.chat.completions.create({
         max_tokens: 2048,
         messages: [
@@ -27,7 +35,7 @@ export const functions = hyperStore({
               { text: prompt, type: "text" },
               {
                 image_url: {
-                  url: input,
+                  url,
                 },
                 type: "image_url",
               },

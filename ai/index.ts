@@ -207,7 +207,7 @@ export const describeVideo = async (
             (frameData) =>
               ({
                 image_url: {
-                  url: `data:image/jpeg;base64,${frameData}`,
+                  url: `data:image/png;base64,${frameData}`,
                 },
                 type: "image_url",
               }) as OpenAI.Chat.Completions.ChatCompletionContentPartImage,

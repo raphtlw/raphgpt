@@ -34,6 +34,7 @@ import ollama from "ollama";
 import OpenAI from "openai";
 import path from "path";
 import { Env } from "secrets/env";
+import sharp, { Sharp } from "sharp";
 import { inspect } from "util";
 import { z } from "zod";
 import zodGPT from "zod-gpt";
@@ -278,20 +279,40 @@ bot
 
       // extract frames
       await fs.promises.mkdir(framesOutputPath);
-      const extractFramesCommand = await Command(
-        `ffmpeg -i ${receivedFilePath} -vf fps=4 ${framesOutputPath}/%d.png`,
+      await Command(
+        `ffmpeg -i ${receivedFilePath} -vf fps=1/4 ${framesOutputPath}/%d.png`,
       ).run();
-      console.log(extractFramesCommand);
 
-      // stitch frames together
       const videoFramePaths = await fs.promises
         .readdir(framesOutputPath)
         .then((filenames) =>
           filenames.map((filename) => path.join(framesOutputPath, filename)),
         );
-      const stitchedFrames = await joinImages(videoFramePaths, {
-        direction: "horizontal",
-      });
+
+      const videoFrames: Sharp[] = [];
+
+      if (ctx.msg.video_note) {
+        // remove white border
+        for (const vfpath of videoFramePaths) {
+          const rect = Buffer.from(
+            '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
+          );
+          const image = sharp(vfpath)
+            .resize(300, 300)
+            .png()
+            .composite([{ input: rect, blend: "dest-in" }])
+            .jpeg();
+          videoFrames.push(image);
+        }
+      }
+
+      // stitch frames together
+      const stitchedFrames = await joinImages(
+        await Promise.all(videoFrames.map((frame) => frame.toBuffer())),
+        {
+          direction: "horizontal",
+        },
+      );
       await stitchedFrames.toFile(stitchedFramesOutputPath);
       const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
         encoding: "base64",
@@ -314,6 +335,17 @@ bot
       draft.add({ type: "text", text: description! });
       draft.add({ type: "text", text: "and the following transcription:" });
       draft.add({ type: "text", text: transcription });
+
+      const lastFrameOutputPath = `data/file/${createId()}.png`;
+      await Command(
+        `ffmpeg -sseof -1 -i ${receivedFilePath} -vsync 0 -update true ${lastFrameOutputPath}`,
+      ).run();
+
+      draft.add({
+        type: "text",
+        text: `The user has uploaded this image locally: ${lastFrameOutputPath}`,
+      });
+
       draft.add({
         type: "text",
         text: "Respond to the transcription and the video contents.",
