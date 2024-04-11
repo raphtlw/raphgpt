@@ -247,23 +247,13 @@ bot
       });
     }
     if (ctx.msg.video_note) {
-      // Process frames from video
       // Get transcript from video
+      // Process frames from video
 
-      const message = await db.query.messages.findFirst({
-        columns: {
-          file: true,
-          contextData: true,
-        },
-        where: and(
-          isNotNull(messages.file),
-          eq(messages.telegramId, ctx.msg.message_id.toString()),
-        ),
-      });
-      assert(message);
-      assert(message.file);
+      assert(cachedMessage);
+      assert(cachedMessage.file);
 
-      const receivedFilePath = path.join("data", "file", message.file);
+      const receivedFilePath = path.join("data", "file", cachedMessage.file);
 
       const audioOutputPath = path.join(
         process.cwd(),

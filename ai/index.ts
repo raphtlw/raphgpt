@@ -174,6 +174,7 @@ export const transcribeAudio = async (filePath: string) => {
   const transcription = await openai.audio.transcriptions.create({
     file: fs.createReadStream(filePath),
     model: "whisper-1",
+    language: "en",
   });
 
   console.log("Transcription of voice message by OpenAI:", transcription.text);
