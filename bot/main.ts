@@ -23,6 +23,7 @@ import { debugPrint } from "bot/debug";
 import { sendMultimodalMessage } from "bot/message";
 import { chatAction } from "bot/tasks";
 import { timestamp } from "bot/time";
+import { calculateDetailAmounts } from "common/image-processing";
 import { db } from "db";
 import { guss, messages, openaiMessages } from "db/schema";
 import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
@@ -279,20 +280,27 @@ bot
       // extract frames
       await fs.promises.mkdir(framesOutputPath);
       await Command(
-        `ffmpeg -i ${receivedFilePath} -vf fps=1/4 ${framesOutputPath}/%d.png`,
+        `ffmpeg -i ${receivedFilePath} -vf fps=30 ${framesOutputPath}/%d.png`,
       ).run();
 
       const videoFramePaths = await fs.promises
         .readdir(framesOutputPath)
         .then((filenames) =>
-          filenames.map((filename) => path.join(framesOutputPath, filename)),
+          filenames
+            .sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]))
+            .map((filename) => path.join(framesOutputPath, filename)),
         );
 
-      const videoFrames: Sharp[] = [];
+      const selectedFramePaths: string[] = [];
+      const modifiedFrames: Sharp[] = [];
+
+      for (let i = 0; i < videoFramePaths.length; i += 30) {
+        selectedFramePaths.push(videoFramePaths[i]);
+      }
 
       if (ctx.msg.video_note) {
         // remove white border
-        for (const vfpath of videoFramePaths) {
+        for (const vfpath of selectedFramePaths) {
           const rect = Buffer.from(
             '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
           );
@@ -301,13 +309,17 @@ bot
             .png()
             .composite([{ input: rect, blend: "dest-in" }])
             .jpeg();
-          videoFrames.push(image);
+          modifiedFrames.push(image);
+        }
+      } else {
+        for (const vfpath of selectedFramePaths) {
+          modifiedFrames.push(sharp(vfpath).jpeg());
         }
       }
 
       // stitch frames together
       const stitchedFrames = await joinImages(
-        await Promise.all(videoFrames.map((frame) => frame.toBuffer())),
+        await Promise.all(modifiedFrames.map((frame) => frame.toBuffer())),
         {
           direction: "horizontal",
         },
@@ -316,6 +328,21 @@ bot
       const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
         encoding: "base64",
       });
+
+      // get last 60 frames (1 second = 30 frames)
+      const lastFewFrames = videoFramePaths.slice(-60);
+
+      // store "clearness" of frames. the higher the variance, the clearer the image.
+      const laplacianVariances = await calculateDetailAmounts(lastFewFrames);
+
+      console.log(laplacianVariances);
+
+      // save least blurry frame
+      const lastFramePath = `data/file/${fileId}.last.png`;
+      await fs.promises.rename(
+        laplacianVariances[laplacianVariances.length - 1].imagePath,
+        lastFramePath,
+      );
 
       // delete temp folders
       await Promise.all([
@@ -329,22 +356,15 @@ bot
 
       draft.add({
         type: "text",
-        text: "User has uploaded a video with the following contents:",
+        text: "User has uploaded a video which goes:",
       });
       draft.add({ type: "text", text: description! });
       draft.add({ type: "text", text: "and the following transcription:" });
       draft.add({ type: "text", text: transcription });
-
-      const lastFrameOutputPath = `data/file/${fileId}.last.png`;
-      await Command(
-        `ffmpeg -sseof -1 -i ${receivedFilePath} -vsync 0 -update true ${lastFrameOutputPath}`,
-      ).run();
-
       draft.add({
         type: "text",
-        text: `The user has uploaded this image locally: ${lastFrameOutputPath}`,
+        text: `The user has uploaded this image locally: ${lastFramePath}`,
       });
-
       draft.add({
         type: "text",
         text: "Respond to the transcription and the video contents.",
@@ -631,10 +651,11 @@ devChatGroup.command(["l", "L", "w", "W"], async (ctx, next) => {
       const groupMember = await ctx.getChatMember(
         Number(record.telegramUserId),
       );
+      const totalScore = (record.win ?? 0) - (record.loss ?? 0);
       const msg = fmt([
         `Awarded ${record[operation] ?? 0} ${operation === "loss" ? "Ls" : "dubs"} to `,
         `${groupMember.user.username ?? groupMember.user.first_name}`,
-        `\nCurrent score: ${Math.abs((record.win ?? 0) - (record.loss ?? 0))} ${(record.win ?? 0) - (record.loss ?? 0) < 0 ? "Ls" : "Ws"}`,
+        `\nCurrent score: ${Math.abs(totalScore)} ${totalScore < 0 ? "Ls" : totalScore > 0 ? "Ws" : ""}`,
       ]);
       await ctx.api.editMessageText(
         ctx.chat.id,

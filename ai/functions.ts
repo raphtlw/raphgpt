@@ -7,6 +7,7 @@ import { Api } from "grammy";
 import Jimp from "jimp";
 import OpenAI from "openai";
 import { Env } from "secrets/env";
+import { get_encoding, encoding_for_model } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
 
@@ -132,13 +133,52 @@ export const functions = hyperStore({
       const res = await got(
         `https://customsearch.googleapis.com/customsearch/v1?cx=${Env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID}&key=${Env.GOOGLE_CUSTOM_SEARCH_API_KEY}&q=${query}`,
       ).json<{ items: { link: string; snippet: string; title: string }[] }>();
-      console.log("Google Search Response:", inspect(res, true, 10, true));
+      // console.log("Google Search Response:", inspect(res, true, 10, true));
 
-      return res.items.map((item) => ({
-        link: item.link,
-        snippet: item.snippet,
-        title: item.title,
-      }));
+      const results: unknown[] = [];
+
+      // get first result contents
+      const firstResultContents = await got(res.items[0].link).text();
+      // limit content length to fit context size for model
+      const encoder = encoding_for_model("gpt-3.5-turbo-0125");
+      const encoded = encoder.encode(firstResultContents);
+      const truncatedToFitModelContextLength = encoded.slice(20, 4096 + 20);
+      const firstResultTruncated = new TextDecoder().decode(
+        encoder.decode(truncatedToFitModelContextLength),
+      );
+
+      const completion = await openai.chat.completions.create({
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Summarize the following webpage:",
+              },
+              { type: "text", text: firstResultTruncated },
+              {
+                type: "text",
+                text: "Respond with just the pure content in text form.",
+              },
+            ],
+          },
+        ],
+        model: "gpt-3.5-turbo-0125",
+      });
+      results.push(completion.choices[0].message.content);
+
+      console.log(results);
+
+      for (const item of res.items) {
+        results.push({
+          link: item.link,
+          snippet: item.snippet,
+          title: item.title,
+        });
+      }
+
+      return results;
     },
   }),
   http_request: hyper({
