@@ -247,26 +247,25 @@ bot
         text: transcription,
       });
     }
-    if (ctx.msg.video_note) {
+    if (ctx.msg.video_note || ctx.msg.video) {
       // Get transcript from video
       // Process frames from video
 
       assert(cachedMessage);
       assert(cachedMessage.file);
 
+      const fileId =
+        ctx.msg.video_note?.file_unique_id ??
+        ctx.msg.video?.file_unique_id ??
+        createId();
+
       const receivedFilePath = path.join("data", "file", cachedMessage.file);
 
-      const audioOutputPath = path.join(
-        process.cwd(),
-        `${ctx.msg.video_note.file_unique_id}.mp3`,
-      );
-      const framesOutputPath = path.join(
-        process.cwd(),
-        `${ctx.msg.video_note.file_unique_id}.capture`,
-      );
+      const audioOutputPath = path.join(process.cwd(), `${fileId}.mp3`);
+      const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
       const stitchedFramesOutputPath = path.join(
         process.cwd(),
-        `${ctx.msg.video_note.file_unique_id}.png`,
+        `${fileId}.png`,
       );
 
       const extractAudioCommand = await Command(
@@ -336,7 +335,7 @@ bot
       draft.add({ type: "text", text: "and the following transcription:" });
       draft.add({ type: "text", text: transcription });
 
-      const lastFrameOutputPath = `data/file/${createId()}.png`;
+      const lastFrameOutputPath = `data/file/${fileId}.last.png`;
       await Command(
         `ffmpeg -sseof -1 -i ${receivedFilePath} -vsync 0 -update true ${lastFrameOutputPath}`,
       ).run();
@@ -385,7 +384,8 @@ bot
 
     history.addSystem(
       "You are a smart and helpful assistant named RaphGPT.",
-      `Chat chat_id=${ctx.chat.id} thread_id=${messageThreadId}`,
+      "When the user sends a video, you are to respond to the transcription.",
+      `Current chat chat_id=${ctx.chat.id} thread_id=${messageThreadId}`,
     );
 
     const conversation = new Conversation();
