@@ -1,6 +1,12 @@
 import { autoRetry } from "@grammyjs/auto-retry";
 import { FileFlavor, hydrateFiles } from "@grammyjs/files";
-import { fmt, pre } from "@grammyjs/parse-mode";
+import {
+  FormattedString,
+  bold,
+  fmt,
+  pre,
+  underline,
+} from "@grammyjs/parse-mode";
 import { run, sequentialize } from "@grammyjs/runner";
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -18,8 +24,8 @@ import { sendMultimodalMessage } from "bot/message";
 import { chatAction } from "bot/tasks";
 import { timestamp } from "bot/time";
 import { db } from "db";
-import { messages, openaiMessages } from "db/schema";
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { guss, messages, openaiMessages } from "db/schema";
+import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import fs from "fs";
 import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
 import { joinImages } from "join-images";
@@ -533,6 +539,148 @@ bot.chatType("private").on("message", async (ctx, next) => {
 
   await next();
 });
+
+const devChatGroup = bot
+  .chatType(["group", "supergroup"])
+  .filter((ctx) => ctx.chat.id.toString() === Env.TELEGRAM_DEV_CHAT_CHAT_ID);
+
+devChatGroup.command(["l", "L", "w", "W"], async (ctx, next) => {
+  const operation = ctx.hasCommand(["l", "L"]) ? "loss" : "win";
+
+  if (ctx.msg.reply_to_message?.from?.id === ctx.msg.from.id) {
+    await ctx.reply("❌ You cannot mark yourself!", {
+      reply_parameters: {
+        message_id: ctx.msg.message_id,
+      },
+    });
+
+    return await next();
+  }
+
+  let record: typeof guss.$inferSelect | undefined;
+
+  if (ctx.msg.reply_to_message?.from) {
+    record = await db
+      .insert(guss)
+      .values({
+        id: createId(),
+        telegramUserId: ctx.msg.reply_to_message.from.id.toString(),
+        [operation]: 1,
+        fromMessage: await db.query.messages
+          .findFirst({
+            where: eq(
+              messages.telegramId,
+              ctx.msg.reply_to_message.message_id.toString(),
+            ),
+          })
+          .then((msg) => msg?.id),
+        reason: ctx.match,
+      })
+      .returning()
+      .get();
+
+    if (record) {
+      const groupMember = await ctx.getChatMember(
+        Number(record.telegramUserId),
+      );
+      const msg = fmt`Awarded ${record[operation] ?? 0} ${operation === "loss" ? "Ls" : "dubs"} to ${groupMember.user.username ?? groupMember.user.first_name}`;
+      const sentMessage = await ctx.reply(msg.text, {
+        reply_parameters: {
+          message_id: ctx.msg.message_id,
+        },
+        entities: msg.entities,
+      });
+      await db.update(guss).set({
+        sentMessage: sentMessage.message_id.toString(),
+      });
+    }
+  } else {
+    record = await db.select().from(guss).orderBy(desc(guss.created)).get();
+    if (record) {
+      record = await db
+        .update(guss)
+        .set({
+          [operation]: sql`${guss[operation]} + 1`,
+        })
+        .where(eq(guss.id, record.id))
+        .returning()
+        .get();
+
+      const groupMember = await ctx.getChatMember(
+        Number(record.telegramUserId),
+      );
+      const msg = fmt([
+        `Awarded ${record[operation] ?? 0} ${operation === "loss" ? "Ls" : "dubs"} to `,
+        `${groupMember.user.username ?? groupMember.user.first_name}`,
+        `\nCurrent score: ${Math.abs((record.win ?? 0) - (record.loss ?? 0))} ${(record.win ?? 0) - (record.loss ?? 0) < 0 ? "Ls" : "Ws"}`,
+      ]);
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        Number(record.sentMessage),
+        msg.text,
+        {
+          entities: msg.entities,
+        },
+      );
+    }
+  }
+
+  await next();
+});
+
+devChatGroup.command(["scoreboard", "score"], async (ctx, next) => {
+  const players = await db
+    .select({
+      userId: guss.telegramUserId,
+      loss: sql<number>`IFNULL(SUM(${guss.loss}), 0)`.mapWith(Number),
+      win: sql<number>`IFNULL(SUM(${guss.win}), 0)`.mapWith(Number),
+    })
+    .from(guss)
+    .groupBy(sql`${guss.telegramUserId}`);
+
+  const message: FormattedString[] = [fmt`${bold("SCOREBOARD")}`];
+
+  if (players.length === 0) {
+    message.push(fmt`\n`);
+    message.push(fmt`\n`);
+    message.push(fmt`Nobody wants to play :(`);
+  }
+
+  for (const player of players) {
+    const groupMember = await ctx.getChatMember(Number(player.userId));
+    message.push(fmt`\n`);
+    message.push(fmt`\n`);
+    message.push(
+      fmt`${underline(groupMember.user.username ?? groupMember.user.first_name)}`,
+    );
+    message.push(fmt`\n- ${player.win} Ws`);
+    message.push(fmt`\n- ${player.loss} Ls`);
+    message.push(fmt`\nTotal score: ${player.win - player.loss}`);
+  }
+
+  const messageCombined = fmt(message);
+
+  await ctx.reply(messageCombined.text, {
+    entities: messageCombined.entities,
+    reply_parameters: {
+      message_id: ctx.msg.message_id,
+      allow_sending_without_reply: true,
+    },
+  });
+
+  await next();
+});
+
+await bot.api.setMyCommands(
+  [
+    { command: "l", description: "Award loss" },
+    { command: "w", description: "Award win" },
+    { command: "scoreboard", description: "Show scoreboard" },
+  ],
+  {
+    scope: { type: "chat", chat_id: Env.TELEGRAM_DEV_CHAT_CHAT_ID },
+  },
+);
 
 // regularGroups
 //   .chatType(["group", "supergroup"])

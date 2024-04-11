@@ -18,6 +18,7 @@ export const envSchema = z.object({
   TELEGRAM_API_KEY: z.string(),
   TELEGRAM_BOT_TESTING_CHAT_ID: z.string(),
   TELEGRAM_BOT_UPDATES_CHAT_ID: z.string(),
+  TELEGRAM_DEV_CHAT_CHAT_ID: z.string(),
   TELEGRAM_GPT4_CHAT_ID: z.string(),
   TELEGRAM_OPENAI_CHAT_ID: z.string(),
 });

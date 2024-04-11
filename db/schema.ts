@@ -18,9 +18,7 @@ export const messages = sqliteTable("messages", {
   contextData: text("context_data").notNull(),
   text: text("text"),
   file: text("file"),
-  created: int("created")
-    .notNull()
-    .$defaultFn(() => timestamp()),
+  created: int("created").notNull().$default(timestamp),
 });
 
 export const openaiMessages = sqliteTable("openai_messages", {
@@ -28,9 +26,18 @@ export const openaiMessages = sqliteTable("openai_messages", {
   telegramChatId: text("telegram_chat_id").notNull(),
   telegramThreadId: text("telegram_thread_id"),
   json: text("json").notNull(),
-  created: int("created")
-    .notNull()
-    .$default(() => timestamp()),
+  created: int("created").notNull().$default(timestamp),
+});
+
+export const guss = sqliteTable("guss", {
+  id: text("id").primaryKey(),
+  telegramUserId: text("telegram_user_id").notNull(),
+  loss: int("loss").default(0),
+  win: int("win").default(0),
+  fromMessage: text("from_message").references(() => messages.id),
+  sentMessage: text("sent_message"),
+  reason: text("reason").notNull(),
+  created: int("created").notNull().$default(timestamp),
 });
 
 // export const messagesRelations = relations(messages, ({ one }) => ({
