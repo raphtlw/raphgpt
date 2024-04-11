@@ -15,6 +15,7 @@
     "@grammyjs/runner": "^2.0.3",
     "@libsql/client": "^0.5.5",
     "@paralleldrive/cuid2": "^2.2.2",
+    "@paulmillr/qr": "^0.1.1",
     "@zodios/core": "^10.9.6",
     "bree": "^9.2.2",
     "dotenv": "^16.4.5",
