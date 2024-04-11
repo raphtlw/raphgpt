@@ -20,7 +20,7 @@ import {
 import assert from "assert";
 import { Command } from "bot/command";
 import { debugPrint } from "bot/debug";
-import { sendMultimodalMessage } from "bot/message";
+import { sendMarkdownMessage } from "bot/message";
 import { chatAction } from "bot/tasks";
 import { timestamp } from "bot/time";
 import { calculateDetailAmounts } from "common/image-processing";
@@ -480,7 +480,7 @@ bot
       );
     }
 
-    await sendMultimodalMessage(ctx.chat.id, responseContent, {
+    await sendMarkdownMessage(ctx.chat.id, responseContent, {
       message_thread_id:
         ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
           ? Number(messageThreadId)

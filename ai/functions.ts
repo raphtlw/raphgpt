@@ -19,7 +19,7 @@ export const functions = hyperStore({
     args: {
       input: z.string().describe("The image_url to give to the GPT-4V model"),
       prompt: z.string().describe("Prompt text to instruct the GPT-4V model"),
-      is_local: z.boolean().describe("true if image is uploaded locally"),
+      is_local: z.boolean().describe("Whether image is uploaded locally"),
     },
     async handler({ input, prompt, is_local }) {
       let url = input;
@@ -52,9 +52,11 @@ export const functions = hyperStore({
     },
   }),
   generate_image: hyper({
-    description: "Generate image using OpenAI DALL-E model",
+    description: "Generate image using DALL-E model",
     args: {
-      prompt: z.string().describe("Prompt text for DALL-E model"),
+      prompt: z
+        .string()
+        .describe("Prompt text, almost exactly what user requests for"),
       quality: z.enum(["standard", "hd"]),
       size: z.enum(["1024x1024", "1792x1024", "1024x1792"]),
       style: z
@@ -76,7 +78,7 @@ export const functions = hyperStore({
     }) {
       const response = await openai.images.generate({
         model: "dall-e-3",
-        prompt: prompt,
+        prompt: `I NEED to test how the tool works with extremely simple prompts. DO NOT add any detail, just use it AS-IS: ${prompt}`,
         quality: quality,
         size: size,
         style: style,

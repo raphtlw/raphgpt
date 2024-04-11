@@ -1,77 +1,165 @@
-import { blockquote, fmt } from "@grammyjs/parse-mode";
+import {
+  FormattedString,
+  blockquote,
+  bold,
+  fmt,
+  italic,
+  link,
+} from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
+import assert from "assert";
 import { db } from "db";
 import { messages } from "db/schema";
 import { Api, RawApi } from "grammy";
 import { Other } from "node_modules/grammy/out/core/api";
 import { Env } from "secrets/env";
+import { inspect } from "util";
 
-export const sendMultimodalMessage = async <R extends RawApi>(
+export const markdownToEntities = (text: string) => {
+  const result: (FormattedString | { alt: string; imageUrl: string })[] = [];
+  const msgbuf: FormattedString[] = [];
+  const tbuf: string[] = [];
+
+  let cursor = 0;
+  while (cursor < text.length) {
+    // parse bold
+    if (text[cursor] === "*" && text[cursor + 1] === "*") {
+      cursor++;
+      cursor++;
+
+      while ((text[cursor] === "*" && text[cursor + 1] === "*") === false) {
+        tbuf.push(text[cursor]);
+        cursor++;
+      }
+      cursor++;
+
+      msgbuf.push(bold(tbuf.join("")));
+      tbuf.length = 0;
+
+      cursor++;
+      continue;
+    }
+
+    // parse link
+    if (text[cursor] === "[") {
+      cursor++;
+      while (text[cursor] !== "]") {
+        tbuf.push(text[cursor]); // link name
+        cursor++;
+      }
+      cursor++;
+
+      const linkName = tbuf.join("");
+      tbuf.length = 0;
+
+      assert(
+        text[cursor] === "(",
+        "Parsing error: missing parenthesis after link label",
+      );
+
+      cursor++;
+      while (text[cursor] !== ")") {
+        tbuf.push(text[cursor]); // link url
+        cursor++;
+      }
+
+      const linkUrl = tbuf.join("");
+      tbuf.length = 0;
+
+      msgbuf.push(link(linkName, linkUrl));
+
+      cursor++;
+      continue;
+    }
+
+    // parse image
+    if (text[cursor] === "!" && text[cursor + 1] === "[") {
+      cursor++;
+      cursor++;
+
+      while (text[cursor] !== "]") {
+        tbuf.push(text[cursor]);
+        cursor++;
+      }
+      cursor++;
+
+      const imageAlt = tbuf.join("");
+      tbuf.length = 0;
+
+      assert(
+        text[cursor] === "(",
+        "Parsing error: missing parenthesis after image alt",
+      );
+
+      cursor++;
+      while (text[cursor] !== ")") {
+        tbuf.push(text[cursor]); // link url
+        cursor++;
+      }
+
+      const imageUrl = tbuf.join("");
+      tbuf.length = 0;
+
+      result.push(fmt(msgbuf));
+      msgbuf.length = 0;
+
+      result.push({ alt: imageAlt, imageUrl });
+
+      cursor++;
+      continue;
+    }
+
+    // parse italic
+    if (text[cursor] === "*") {
+      cursor++;
+
+      while (text[cursor] !== "*") {
+        tbuf.push(text[cursor]);
+        cursor++;
+      }
+
+      msgbuf.push(italic(tbuf.join("")));
+      tbuf.length = 0;
+
+      cursor++;
+      continue;
+    }
+
+    msgbuf.push(fmt([text[cursor]]));
+    cursor++;
+  }
+
+  result.push(fmt(msgbuf));
+  msgbuf.length = 0;
+
+  console.log(inspect(result, true, 10, true));
+  assert(tbuf.length === 0, "tbuf should be empty!");
+
+  return result;
+};
+
+export const sendMarkdownMessage = async <R extends RawApi>(
   chat_id: string | number,
   text: string,
   other?: Other<R, "sendMessage", "chat_id" | "text">,
 ) => {
   const api = new Api(Env.TELEGRAM_API_KEY);
 
-  const buf: string[] = [];
+  const formattedMessages = markdownToEntities(text);
 
-  const flushBuf = async () => {
-    if (buf.length > 0) {
-      await sendMessage(chat_id, buf.join("\n"), {
+  for (const msg of formattedMessages) {
+    if ("imageUrl" in msg) {
+      await api.sendPhoto(chat_id, msg.imageUrl, {
         ...other,
-        parse_mode: "MarkdownV2",
+        caption: msg.alt,
       });
-      buf.length = 0;
-    }
-  };
-
-  for (let line of text.split("\n")) {
-    console.log("Processing line:", line);
-
-    const img = /^!\[(.*)\]\((.*)\).*/gm.exec(line);
-    if (img) {
-      await flushBuf();
-      await api.sendPhoto(chat_id, img[2], {
+    } else {
+      await api.sendMessage(chat_id, msg.text, {
         ...other,
-        caption: img[1],
-        parse_mode: "MarkdownV2",
+        entities: msg.entities,
       });
-      continue;
     }
-
-    const ul = /-\s(.*)/gm.exec(line);
-    if (ul) {
-      line = `• ${ul[1]}`;
-    }
-
-    line = line.replaceAll("**", "*");
-
-    for (const ec of [
-      "!",
-      "*",
-      "_",
-      "[",
-      "]",
-      "(",
-      ")",
-      "~",
-      "`",
-      ".",
-      "{",
-      "}",
-      "|",
-      "<",
-      ">",
-      "-",
-      "=",
-    ]) {
-      line = line.replaceAll(ec, "\\" + ec);
-    }
-
-    buf.push(line);
   }
-
-  await flushBuf();
 };
 
 export const sendMessage = async <R extends RawApi>(
