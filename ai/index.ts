@@ -77,6 +77,10 @@ export class Conversation {
     this.messages.push(message);
   }
 
+  addSystem(...prompt: string[]) {
+    this.messages.unshift({ role: "system", content: prompt.join("\n") });
+  }
+
   peek() {
     return this.messages[this.messages.length - 1];
   }

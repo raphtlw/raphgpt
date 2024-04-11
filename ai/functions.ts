@@ -1,6 +1,9 @@
+import { fmt, italic } from "@grammyjs/parse-mode";
+import decodeQR from "@paulmillr/qr/decode";
 import { hyper, hyperStore } from "ai/hyper";
 import got from "got";
 import { Api } from "grammy";
+import Jimp from "jimp";
 import OpenAI from "openai";
 import { Env } from "secrets/env";
 import { inspect } from "util";
@@ -51,8 +54,17 @@ export const functions = hyperStore({
           "The style of the generated images. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images.",
         )
         .optional(),
+      chat_id: z.string().describe("Chat which originated the request"),
+      thread_id: z.string().describe("Thread which originated the request"),
     },
-    async handler({ prompt, quality, size, style = "vivid" }) {
+    async handler({
+      prompt,
+      quality,
+      size,
+      style = "vivid",
+      chat_id,
+      thread_id,
+    }) {
       const response = await openai.images.generate({
         model: "dall-e-3",
         prompt: prompt,
@@ -64,12 +76,20 @@ export const functions = hyperStore({
 
       const tg = new Api(Env.TELEGRAM_API_KEY);
       await tg.sendMediaGroup(
-        Env.TELEGRAM_GPT4_CHAT_ID,
-        response.data.map((img) => ({
-          media: img.url!,
-          type: "photo",
-          caption: `💭 ${img.revised_prompt} ✨`,
-        })),
+        Number(chat_id),
+        response.data.map((img) => {
+          const imgcaption = fmt`💭 ${italic(img.revised_prompt ?? "Generated image")} ✨`;
+
+          return {
+            media: img.url!,
+            type: "photo",
+            caption: imgcaption.text,
+            caption_entities: imgcaption.entities,
+          };
+        }),
+        {
+          message_thread_id: Number(thread_id),
+        },
       );
 
       return response;
@@ -114,7 +134,7 @@ export const functions = hyperStore({
     },
   }),
   http_request: hyper({
-    description: "Run a HTTP request on an input URL.",
+    description: "Run a HTTP request",
     args: {
       body: z.string().describe("Request body in JSON format"),
       method: z.enum([
@@ -133,6 +153,17 @@ export const functions = hyperStore({
     },
     async handler({ body, method, url }) {
       return await got(url, { body, method }).json();
+    },
+  }),
+  read_qr_code: hyper({
+    description: "Scan QR code",
+    args: {
+      image_url: z.string().describe("The image URL containing QR code"),
+    },
+    async handler({ image_url }) {
+      const img = await Jimp.read(image_url);
+      const decoded = decodeQR(img.bitmap);
+      return decoded;
     },
   }),
 });

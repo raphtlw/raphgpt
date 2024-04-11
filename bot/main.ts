@@ -355,6 +355,11 @@ bot
       history = history.takeLast(10);
     }
 
+    history.addSystem(
+      "You are a smart and helpful assistant named RaphGPT.",
+      `Chat chat_id=${ctx.chat.id} thread_id=${messageThreadId}`,
+    );
+
     const conversation = new Conversation();
 
     conversation.add(draft.get());
