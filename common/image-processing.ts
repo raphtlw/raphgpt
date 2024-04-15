@@ -1,19 +1,19 @@
 import sharp from "sharp";
 
+export const KERNEL_LAPLACIAN: sharp.Kernel = {
+  width: 3,
+  height: 3,
+  kernel: [0, 1, 0, 1, -4, 1, 0, 1, 0],
+};
+
 export const calculateDetailAmounts = async (images: string[]) => {
   const laplacianVariances: { imagePath: string; variance: number }[] = [];
 
   for (const imagePath of images) {
-    const laplacianKernel = {
-      width: 3,
-      height: 3,
-      kernel: [0, 1, 0, 1, -4, 1, 0, 1, 0],
-    };
-
     const laplacianImageData = await sharp(imagePath)
       .greyscale()
       .raw()
-      .convolve(laplacianKernel)
+      .convolve(KERNEL_LAPLACIAN)
       .toBuffer();
 
     // Calculate the variance of our convolved image

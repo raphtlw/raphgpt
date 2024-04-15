@@ -1,21 +1,30 @@
 import { fmt, italic } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import decodeQR from "@paulmillr/qr/decode";
+import { transcribeAudio } from "ai";
 import { hyper, hyperStore } from "ai/hyper";
 import * as GoogleSearch from "api/google-search";
+import assert from "assert";
 import { Command } from "bot/command";
 import { calculateDetailAmounts } from "common/image-processing";
+import { format, parse } from "date-fns";
+import { db } from "db";
+import { messages } from "db/schema";
+import { eq } from "drizzle-orm";
 import fs from "fs";
 import got from "got";
 import { Api } from "grammy";
+import { Message } from "grammy/types";
 import Jimp from "jimp";
 import { joinImages } from "join-images";
 import { evaluate } from "mathjs";
+import mime from "mime";
 import OpenAI from "openai";
 import path from "path";
 import puppeteer from "puppeteer";
 import { Env } from "secrets/env";
 import sharp, { Sharp } from "sharp";
+import { pipeline } from "stream/promises";
 import { encoding_for_model } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
@@ -23,17 +32,65 @@ import { z } from "zod";
 const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 
 export const functions = hyperStore({
-  vision: hyper({
+  get_file_from_message: hyper({
+    description: "Find a file path from message_id",
+    args: {
+      message_id: z.string(),
+    },
+    async handler({ message_id }) {
+      const message = await db.query.messages.findFirst({
+        where: eq(messages.id, message_id),
+      });
+
+      return message?.file;
+    },
+  }),
+  listen: hyper({
+    description: "Transcribe audio file",
+    args: {
+      audio: z.string().describe("The audio file url/path to transcribe"),
+    },
+    async handler({ audio }) {
+      const fileId = createId();
+
+      let url = audio;
+
+      const localPath = path.join(process.cwd(), "data", "file", audio);
+      if (fs.existsSync(localPath)) {
+        url = localPath;
+      } else if (!fs.existsSync(audio)) {
+        const outPath = path.join(
+          process.cwd(),
+          "data",
+          "file",
+          `${fileId}.unknown`,
+        );
+        await pipeline(got.stream(url), fs.createWriteStream(outPath));
+        url = outPath;
+      }
+
+      return await transcribeAudio(url);
+    },
+  }),
+  see: hyper({
     description: "Run OpenAI GPT-4 Vision on the image",
     args: {
-      input: z.string().describe("The image_url to give to the GPT-4V model"),
+      image: z.string().describe("Link/path to image for GPT-4V model"),
       usage: z.string().describe("Description of intended purpose"),
     },
-    async handler({ input, usage }) {
-      let url = input;
-      if (url.startsWith("data/file")) {
-        url = await fs.promises.readFile(input, { encoding: "base64" });
-        url = `data:image/png;base64,${url}`;
+    async handler({ image, usage }) {
+      let url = image;
+
+      const localPath = path.join(process.cwd(), "data", "file", image);
+      if (fs.existsSync(localPath)) {
+        url = localPath;
+      }
+      if (fs.existsSync(url)) {
+        const data = await fs.promises.readFile(url, {
+          encoding: "base64",
+        });
+        const mimeType = mime.getType(localPath);
+        url = `data:${mimeType};base64,${data}`;
       }
 
       const completion = await openai.chat.completions.create({
@@ -42,7 +99,7 @@ export const functions = hyperStore({
           {
             role: "system",
             content: [
-              "You are an image analysis model, intended for:",
+              "You are an image analysis model, created to",
               usage,
             ].join("\n"),
           },
@@ -66,66 +123,36 @@ export const functions = hyperStore({
       return completion.choices[0].message.content;
     },
   }),
-  generate_image: hyper({
-    description: "Generate image using DALL-E model",
-    args: {
-      prompt: z
-        .string()
-        .describe("Prompt text, almost exactly what user requests for"),
-      quality: z.enum(["standard", "hd"]),
-      size: z.enum(["1024x1024", "1792x1024", "1024x1792"]),
-      style: z.enum(["vivid", "natural"]).optional(),
-      chat_id: z.string().describe("Chat which originated the request"),
-      thread_id: z.string().describe("Thread which originated the request"),
-    },
-    async handler({
-      prompt,
-      quality,
-      size,
-      style = "vivid",
-      chat_id,
-      thread_id,
-    }) {
-      const response = await openai.images.generate({
-        model: "dall-e-3",
-        prompt: `I NEED to test how the tool works with extremely simple prompts. DO NOT add any detail, just use it AS-IS: ${prompt}`,
-        quality: quality,
-        size: size,
-        style: style,
-      });
-      console.log("DALL-E Generation:", inspect(response, true, 10, true));
-
-      const tg = new Api(Env.TELEGRAM_API_KEY);
-      await tg.sendMediaGroup(
-        Number(chat_id),
-        response.data.map((img) => {
-          const imgcaption = fmt`💭 ${italic(img.revised_prompt ?? "Generated image")} ✨`;
-
-          return {
-            media: img.url!,
-            type: "photo",
-            caption: imgcaption.text,
-            caption_entities: imgcaption.entities,
-          };
-        }),
-        {
-          message_thread_id: Number(thread_id),
-        },
-      );
-
-      return response;
-    },
-  }),
-  process_video: hyper({
+  watch: hyper({
     description: "Analyze frames from a video using GPT-4V",
     args: {
-      file_path: z.string().describe("Video file path"),
-      is_video_note: z.enum(["true", "false"]),
+      video: z.string().describe("Link/path to video"),
+      message_id: z.string().describe("Message ID"),
     },
-    async handler({ file_path, is_video_note }) {
-      const videoNote = is_video_note === "true";
-
+    async handler({ video, message_id }) {
       const fileId = createId();
+
+      let url = video;
+
+      const localPath = path.join(process.cwd(), "data", "file", video);
+      if (fs.existsSync(localPath)) {
+        url = localPath;
+      } else if (!fs.existsSync(video)) {
+        const outPath = path.join(
+          process.cwd(),
+          "data",
+          "file",
+          `${fileId}.unknown`,
+        );
+        await pipeline(got.stream(url), fs.createWriteStream(outPath));
+        url = outPath;
+      }
+
+      const message = await db.query.messages.findFirst({
+        where: eq(messages.id, message_id),
+      });
+      assert(message, "Failed to retrieve message from DB");
+      const msg: Message = JSON.parse(message.contextData);
 
       const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
       const stitchedFramesOutputPath = path.join(
@@ -136,7 +163,7 @@ export const functions = hyperStore({
       // extract frames
       await fs.promises.mkdir(framesOutputPath);
       await Command(
-        `ffmpeg -i ${file_path} -vf fps=30 ${framesOutputPath}/%d.png`,
+        `ffmpeg -i ${url} -vf fps=30 ${framesOutputPath}/%d.png`,
       ).run();
 
       const videoFramePaths = await fs.promises
@@ -165,7 +192,7 @@ export const functions = hyperStore({
 
       const processedFrames: Sharp[] = [];
 
-      if (videoNote) {
+      if (msg.video_note) {
         // remove white border
         for (const vfpath of selectedFramePaths) {
           const rect = Buffer.from(
@@ -197,16 +224,8 @@ export const functions = hyperStore({
         encoding: "base64",
       });
 
-      // get last 60 frames (1 second = 30 frames)
-      // const lastFewFrames = videoFramePaths.slice(-60);
-
-      // store "clearness" of frames. the higher the variance, the clearer the image.
-      // const laplacianVariances = await calculateDetailAmounts(lastFewFrames);
-
-      // console.log(laplacianVariances);
-
       // save image which prompted the response
-      const lastFramePath = `data/file/${fileId}.last.png`;
+      const lastFramePath = path.join("data", "file", `${fileId}.last.png`);
       await processedFrames[processedFrames.length - 1].toFile(lastFramePath);
 
       // delete temp folders
@@ -242,6 +261,54 @@ export const functions = hyperStore({
         completion.choices[0].message.content,
         `Analyze the video's last frame to better respond to the transcript: ${lastFramePath}`,
       ].join("\n");
+    },
+  }),
+  generate_image: hyper({
+    description: "Generate image using DALL-E model",
+    args: {
+      prompt: z
+        .string()
+        .describe("Prompt text, almost exactly what user requests for"),
+      quality: z.enum(["standard", "hd"]),
+      size: z.enum(["1024x1024", "1792x1024", "1024x1792"]),
+      style: z.enum(["vivid", "natural"]).optional(),
+      message_id: z.string().describe("Message ID"),
+    },
+    async handler({ prompt, quality, size, style = "vivid", message_id }) {
+      const response = await openai.images.generate({
+        model: "dall-e-3",
+        prompt: `I NEED to test how the tool works with extremely simple prompts. DO NOT add any detail, just use it AS-IS: ${prompt}`,
+        quality: quality,
+        size: size,
+        style: style,
+      });
+      console.log("DALL-E Generation:", inspect(response, true, 10, true));
+
+      const message = await db.query.messages.findFirst({
+        where: eq(messages.id, message_id),
+      });
+      assert(message, "Failed to retrieve message from DB");
+      const msg: Message = JSON.parse(message.contextData);
+
+      const tg = new Api(Env.TELEGRAM_API_KEY);
+      await tg.sendMediaGroup(
+        msg.chat.id,
+        response.data.map((img) => {
+          const imgcaption = fmt`💭 ${italic(img.revised_prompt ?? "Generated image")} ✨`;
+
+          return {
+            media: img.url!,
+            type: "photo",
+            caption: imgcaption.text,
+            caption_entities: imgcaption.entities,
+          };
+        }),
+        {
+          message_thread_id: msg.message_thread_id,
+        },
+      );
+
+      return response;
     },
   }),
   get_crypto_data: hyper({
@@ -508,24 +575,27 @@ export const functions = hyperStore({
     description: "Get C23B04 class schedule",
     args: {},
     async handler() {
+      const dayOfWeek = (day: string) =>
+        `${day} ${format(parse(day, "EEE", new Date()), "MM/dd")}`;
+
       return `
       Format:
       <day>
       <start-time - end-time> <class-name>. <classcode>, <type>, <venue>, <tutorial-group>, <from-week, to-week>, <lecturer[. phone]>
       
-      Mon
+      ${dayOfWeek("Mon")}
       11:00 - 13:00 Agile Methodology and Design Thinking. AMDT,  Practical,  Classroom. 03-07-50,  AMDT PC04,  1-7, 11-17,  Dion Ang. 67805305,
       14:00 - 16:00 Mobile App Development. MBAP,  Practical,  Classroom. 01-06-61,  MBAP PC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,
       16:00 - 18:00 Application Security. APSEC,  Practical,  Classroom. 01-06-61,  APSEC PC04,  1-7, 11-17,  Kelvin  Soo Meng Goh,
       18:00 - 19:00 Global Studies. GS,  E-learning,  ,  GS EC04,  1-7, 11-17,  Siang Jin Lee. 67805981,
-      Tue
+      ${dayOfWeek("Tue")}
       09:00 - 11:00 Innovation & Entrepreneurship. INNOVA,  Tutorial,  Audio Visual Room. 26-04-10,  Innova TC04,  1-7, 11-17,  Samantha Quek,
       11:00 - 13:00 Global Studies. GS,  Tutorial,  Audio Visual Room. 26-04-10,  GS TC04,  1-7, 11-17,  Siang Jin Lee. 67805981,
       14:00 - 16:00 Effective Communication. ECOMM,  Tutorial,  Classroom. 03-06-56,  EComm TC04,  1-7, 11-17,  Joshua Chan. 67806410,
-      Wed
+      ${dayOfWeek("Wed")}
       11:00 - 13:00 Mobile App Development. MBAP,  Practical,  Classroom 05-08. 04-05-90,  MBAP PC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,
       14:00 - 18:00 Cloud Application Development. CADV,  Practical,  Classroom. 03-08-29,  CADV PC04,  1-7, 11-17,  Su Yi Lam. 67806938,
-      Thu
+      ${dayOfWeek("Thu")}
       09:00 - 11:00 Application Security. APSEC,  Practical,  Classroom. 03-07-51,  APSEC PC04,  1-7, 11-17,  Kelvin  Soo Meng Goh,
       11:00 - 13:00 Agile Methodology and Design Thinking. AMDT,  Practical,  Classroom. 03-07-51,  AMDT PC04,  1-7, 11-17,  Dion Ang. 67805305,
       14:00 - 15:00 Leadership in Action. LEADACT,  Tutorial,  Classroom. 03-07-50/2,  LEADACT TC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,

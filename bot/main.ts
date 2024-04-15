@@ -211,23 +211,16 @@ bot
     });
     assert(cachedMessage);
 
+    let cachedFile = cachedMessage.file;
+
+    if (cachedFile) {
+      cachedFile = path.join(process.cwd(), "data", "file", cachedFile);
+    }
+
     if (ctx.msg.text) {
       draft.add({
         type: "text",
         text: ctx.msg.text,
-      });
-    }
-    if (ctx.msg.photo) {
-      const file = await ctx.getFile();
-      draft.add({
-        type: "text",
-        text: `Image file: ${file.getUrl()}`,
-      });
-    }
-    if (ctx.msg.caption) {
-      draft.add({
-        type: "text",
-        text: ctx.msg.caption,
       });
     }
     if (ctx.msg.location) {
@@ -236,12 +229,14 @@ bot
         text: JSON.stringify(ctx.msg.location),
       });
     }
+    if (ctx.msg.photo) {
+      draft.add({
+        type: "text",
+        text: `Photo file path: ${cachedMessage.file}`,
+      });
+    }
     if (ctx.msg.voice) {
-      assert(cachedMessage.file);
-
-      const transcription = await transcribeAudio(
-        path.join("data", "file", cachedMessage.file),
-      );
+      const transcription = await transcribeAudio(cachedFile!);
 
       draft.add({
         type: "text",
@@ -249,30 +244,42 @@ bot
       });
     }
     if (ctx.msg.video_note || ctx.msg.video) {
-      assert(cachedMessage.file);
+      const audioOutputPath = path.join(
+        process.cwd(),
+        "data",
+        "file",
+        `${ctx.msg.message_id}.mp3`,
+      );
 
-      const videoPath = path.join("data", "file", cachedMessage.file);
-
-      const audioOutputPath = path.join(process.cwd(), `${createId()}.mp3`);
-
+      // extract audio from video
       const extractAudioCommand = await Command(
-        `ffmpeg -i "${videoPath}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
+        `ffmpeg -i "${cachedFile}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
       ).run();
       console.log(extractAudioCommand);
 
       // create transcription
       const transcription = await transcribeAudio(audioOutputPath);
 
-      // delete temp folders
-      await Promise.all([fs.promises.rm(audioOutputPath)]);
+      // delete generated file
+      await fs.promises.rm(audioOutputPath);
 
       draft.add({
         type: "text",
-        text: `Video ${ctx.msg.video_note ? "note (is_video_note=true)" : "file (is_video_note=false)"}: ${videoPath}`,
+        text: transcription,
       });
       draft.add({
         type: "text",
-        text: `Transcript: ${transcription}`,
+        text: `Video file path:${cachedMessage.file}`,
+      });
+    }
+    if (ctx.msg.sticker) {
+      // TODO: improve sticker processing
+      draft.add({ type: "text", text: JSON.stringify(ctx.msg.sticker) });
+    }
+    if (ctx.msg.caption) {
+      draft.add({
+        type: "text",
+        text: ctx.msg.caption,
       });
     }
 
@@ -320,6 +327,7 @@ bot
       ctx.from.first_name,
       "You are RaphGPT, an autononous AI developed by @raphtlw.",
       "Please use the tools you have at your disposal",
+      `message_id=${cachedMessage.id}`,
     );
 
     const conversation = new Conversation([draft.get()]);
