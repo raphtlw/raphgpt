@@ -78,7 +78,21 @@ export class Conversation {
   }
 
   addSystem(...prompt: string[]) {
-    this.messages.unshift({ role: "system", content: prompt.join("\n") });
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].role === "system") {
+        this.messages.splice(i + 1, 0, {
+          role: "system",
+          content: prompt.join("\n"),
+        });
+      }
+    }
+  }
+
+  addUserInstructions(...prompt: string[]) {
+    this.messages.push({
+      role: "user",
+      content: prompt.join("\n"),
+    });
   }
 
   peek() {
@@ -102,6 +116,9 @@ export const runModel = async (
   history: Conversation,
   current: Conversation,
 ) => {
+  const prompt = current.peek();
+  const promptContent = message(prompt).getCombinedContent();
+
   const completion = await openai.chat.completions.create({
     max_tokens: 4096,
     messages: [...history.get(), ...current.get()],
@@ -109,7 +126,6 @@ export const runModel = async (
     tool_choice: "auto",
     tools: functions.asTools(),
   });
-  console.log("Completion:", inspect(completion.choices, true, 10, true));
 
   const tg = new Api(Env.TELEGRAM_API_KEY);
   const botUpdatesCompletionNotification = fmt([
@@ -138,36 +154,75 @@ export const runModel = async (
 
   const chosen = completion.choices[0];
 
-  if (chosen.message.content) {
-    current.add(chosen.message);
-  }
+  console.log("Model response", inspect(chosen.message, true, 10, true));
+
+  current.add(chosen.message);
 
   if (chosen.message.tool_calls) {
-    const toolResponses: Message[] = [];
-
     for (const toolCall of chosen.message.tool_calls) {
-      // get response from function call
-      // if no function response, don't save function call
-      const response = await functions.callTool(toolCall);
-      if (response) {
-        toolResponses.push({
-          tool_call_id: toolCall.id,
-          role: "tool",
-          content: JSON.stringify(response),
-        });
-      }
-    }
+      let content = "";
 
-    if (toolResponses.length > 0) {
-      current.add(chosen.message);
+      try {
+        // get response from function call
+        const response = await functions.callTool(toolCall);
 
-      for (const response of toolResponses) {
-        current.add(response);
+        console.log(
+          "Result from function call",
+          toolCall,
+          `\nResult ${inspect(response, true, 10, true)}`,
+        );
+
+        if (response) {
+          if (typeof response === "string") {
+            content = response;
+          } else {
+            // if response is JSON-encoded, simplify it (to cut down token usage)
+            // summarize function response data
+            const completion = await openai.chat.completions.create({
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a JSON simplifier for GPT function calls, retain the most information as much as possible.",
+                },
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text: `Original question: ${promptContent}`,
+                    },
+                    {
+                      type: "text",
+                      text: "Simplify the JSON object below to better answer the original question",
+                    },
+                    {
+                      type: "text",
+                      text: JSON.stringify(response),
+                    },
+                  ],
+                },
+              ],
+              model: "gpt-3.5-turbo-0125",
+              response_format: { type: "json_object" },
+            });
+            content = completion.choices[0].message.content!;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+        content = JSON.stringify(e);
       }
+
+      current.add({
+        tool_call_id: toolCall.id,
+        role: "tool",
+        content,
+      });
     }
   }
 
-  return current.peek();
+  return [chosen.message, current.peek()] as const;
 };
 
 export const transcribeAudio = async (filePath: string) => {

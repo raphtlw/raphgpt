@@ -10,13 +10,19 @@ import { createId } from "@paralleldrive/cuid2";
 import assert from "assert";
 import { db } from "db";
 import { messages } from "db/schema";
-import { Api, RawApi } from "grammy";
+import { Api, InputFile, RawApi } from "grammy";
 import { Other } from "node_modules/grammy/out/core/api";
 import { Env } from "secrets/env";
+import sharp from "sharp";
+import texsvg from "texsvg";
 import { inspect } from "util";
 
 export const markdownToEntities = (text: string) => {
-  const result: (FormattedString | { alt: string; imageUrl: string })[] = [];
+  const result: (
+    | FormattedString
+    | { alt: string; imageUrl: string }
+    | { latex: string }
+  )[] = [];
   const msgbuf: FormattedString[] = [];
   const tbuf: string[] = [];
 
@@ -52,10 +58,11 @@ export const markdownToEntities = (text: string) => {
       const linkName = tbuf.join("");
       tbuf.length = 0;
 
-      assert(
-        text[cursor] === "(",
-        "Parsing error: missing parenthesis after link label",
-      );
+      if (text[cursor] !== "(") {
+        // means this wasn't a link
+        msgbuf.push(fmt`[${linkName}]`);
+        continue;
+      }
 
       cursor++;
       while (text[cursor] !== ")") {
@@ -125,6 +132,35 @@ export const markdownToEntities = (text: string) => {
       continue;
     }
 
+    // parse LaTeX
+    if (text[cursor] === "\\" && ["(", "["].includes(text[cursor + 1])) {
+      cursor++;
+      cursor++;
+
+      while (
+        (text[cursor] === "\\" && [")", "]"].includes(text[cursor + 1])) ===
+        false
+      ) {
+        tbuf.push(text[cursor]);
+        cursor++;
+      }
+      cursor++;
+      cursor++;
+
+      const latexExpr = tbuf.join("");
+      tbuf.length = 0;
+
+      console.log(latexExpr);
+
+      result.push(fmt(msgbuf));
+      msgbuf.length = 0;
+
+      result.push({ latex: latexExpr });
+
+      cursor++;
+      continue;
+    }
+
     msgbuf.push(fmt([text[cursor]]));
     cursor++;
   }
@@ -152,6 +188,12 @@ export const sendMarkdownMessage = async <R extends RawApi>(
       await api.sendPhoto(chat_id, msg.imageUrl, {
         ...other,
         caption: msg.alt,
+      });
+    } else if ("latex" in msg) {
+      const svg = await texsvg(msg.latex);
+      const file = sharp(Buffer.from(svg), { density: 600 }).png();
+      await api.sendPhoto(chat_id, new InputFile(await file.toBuffer()), {
+        ...other,
       });
     } else {
       await api.sendMessage(chat_id, msg.text, {

@@ -12,7 +12,6 @@ import { createId } from "@paralleldrive/cuid2";
 import {
   Conversation,
   DraftMessage,
-  describeVideo,
   message,
   runModel,
   transcribeAudio,
@@ -23,20 +22,16 @@ import { debugPrint } from "bot/debug";
 import { sendMarkdownMessage } from "bot/message";
 import { chatAction } from "bot/tasks";
 import { timestamp } from "bot/time";
-import { calculateDetailAmounts } from "common/image-processing";
 import { db } from "db";
 import { guss, messages, openaiMessages } from "db/schema";
 import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import fs from "fs";
 import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
-import { joinImages } from "join-images";
 import { OpenAIChatApi } from "llm-api";
 import ollama from "ollama";
 import OpenAI from "openai";
 import path from "path";
 import { Env } from "secrets/env";
-import sharp, { Sharp } from "sharp";
-import { inspect } from "util";
 import { z } from "zod";
 import zodGPT from "zod-gpt";
 
@@ -226,7 +221,7 @@ bot
       const file = await ctx.getFile();
       draft.add({
         type: "text",
-        text: `User has uploaded a photo at ${file.getUrl()}`,
+        text: `Image file: ${file.getUrl()}`,
       });
     }
     if (ctx.msg.caption) {
@@ -235,8 +230,13 @@ bot
         text: ctx.msg.caption,
       });
     }
+    if (ctx.msg.location) {
+      draft.add({
+        type: "text",
+        text: JSON.stringify(ctx.msg.location),
+      });
+    }
     if (ctx.msg.voice) {
-      // Transcribe voice message
       assert(cachedMessage.file);
 
       const transcription = await transcribeAudio(
@@ -249,125 +249,30 @@ bot
       });
     }
     if (ctx.msg.video_note || ctx.msg.video) {
-      // Get transcript from video
-      // Process frames from video
-
-      assert(cachedMessage);
       assert(cachedMessage.file);
 
-      const fileId =
-        ctx.msg.video_note?.file_unique_id ??
-        ctx.msg.video?.file_unique_id ??
-        createId();
+      const videoPath = path.join("data", "file", cachedMessage.file);
 
-      const receivedFilePath = path.join("data", "file", cachedMessage.file);
-
-      const audioOutputPath = path.join(process.cwd(), `${fileId}.mp3`);
-      const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
-      const stitchedFramesOutputPath = path.join(
-        process.cwd(),
-        `${fileId}.png`,
-      );
+      const audioOutputPath = path.join(process.cwd(), `${createId()}.mp3`);
 
       const extractAudioCommand = await Command(
-        `ffmpeg -i "${receivedFilePath}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
+        `ffmpeg -i "${videoPath}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
       ).run();
       console.log(extractAudioCommand);
 
       // create transcription
       const transcription = await transcribeAudio(audioOutputPath);
 
-      // extract frames
-      await fs.promises.mkdir(framesOutputPath);
-      await Command(
-        `ffmpeg -i ${receivedFilePath} -vf fps=30 ${framesOutputPath}/%d.png`,
-      ).run();
-
-      const videoFramePaths = await fs.promises
-        .readdir(framesOutputPath)
-        .then((filenames) =>
-          filenames
-            .sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]))
-            .map((filename) => path.join(framesOutputPath, filename)),
-        );
-
-      const selectedFramePaths: string[] = [];
-      const modifiedFrames: Sharp[] = [];
-
-      for (let i = 0; i < videoFramePaths.length; i += 30) {
-        selectedFramePaths.push(videoFramePaths[i]);
-      }
-
-      if (ctx.msg.video_note) {
-        // remove white border
-        for (const vfpath of selectedFramePaths) {
-          const rect = Buffer.from(
-            '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
-          );
-          const image = sharp(vfpath)
-            .resize(300, 300)
-            .png()
-            .composite([{ input: rect, blend: "dest-in" }])
-            .jpeg();
-          modifiedFrames.push(image);
-        }
-      } else {
-        for (const vfpath of selectedFramePaths) {
-          modifiedFrames.push(sharp(vfpath).jpeg());
-        }
-      }
-
-      // stitch frames together
-      const stitchedFrames = await joinImages(
-        await Promise.all(modifiedFrames.map((frame) => frame.toBuffer())),
-        {
-          direction: "horizontal",
-        },
-      );
-      await stitchedFrames.toFile(stitchedFramesOutputPath);
-      const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
-        encoding: "base64",
-      });
-
-      // get last 60 frames (1 second = 30 frames)
-      const lastFewFrames = videoFramePaths.slice(-60);
-
-      // store "clearness" of frames. the higher the variance, the clearer the image.
-      const laplacianVariances = await calculateDetailAmounts(lastFewFrames);
-
-      console.log(laplacianVariances);
-
-      // save least blurry frame
-      const lastFramePath = `data/file/${fileId}.last.png`;
-      await fs.promises.rename(
-        laplacianVariances[laplacianVariances.length - 1].imagePath,
-        lastFramePath,
-      );
-
       // delete temp folders
-      await Promise.all([
-        fs.promises.rm(audioOutputPath),
-        fs.promises.rm(framesOutputPath, { force: true, recursive: true }),
-        fs.promises.rm(stitchedFramesOutputPath),
-      ]);
-
-      // ask GPT-4 to describe video, with audio transcript
-      const description = await describeVideo(transcription, [framestrip]);
+      await Promise.all([fs.promises.rm(audioOutputPath)]);
 
       draft.add({
         type: "text",
-        text: "User has uploaded a video which goes:",
-      });
-      draft.add({ type: "text", text: description! });
-      draft.add({ type: "text", text: "and the following transcription:" });
-      draft.add({ type: "text", text: transcription });
-      draft.add({
-        type: "text",
-        text: `The user has uploaded this image locally: ${lastFramePath}`,
+        text: `Video ${ctx.msg.video_note ? "note (is_video_note=true)" : "file (is_video_note=false)"}: ${videoPath}`,
       });
       draft.add({
         type: "text",
-        text: "Respond to the transcription and the video contents.",
+        text: `Transcript: ${transcription}`,
       });
     }
 
@@ -403,39 +308,88 @@ bot
     }
 
     history.addSystem(
-      "You are a smart and helpful assistant named RaphGPT.",
-      "When the user sends a video, you are to respond to the transcription.",
+      "You are a friendly and helpful assistant named RaphGPT.",
+      "You have eyes and can see. Whenever photo/image, you say vision",
+      "Telegram supports location sharing. Just ask the user to send it.",
+      `It is currently ${new Date().toLocaleString()}`,
       `Current chat chat_id=${ctx.chat.id} thread_id=${messageThreadId}`,
     );
 
-    const conversation = new Conversation();
+    history.addUserInstructions(
+      "My name is",
+      ctx.from.first_name,
+      "You are RaphGPT, an autononous AI developed by @raphtlw.",
+      "Please use the tools you have at your disposal",
+    );
 
-    conversation.add(draft.get());
+    const conversation = new Conversation([draft.get()]);
 
-    const response = await chatAction(ctx.chat, "typing", async () => {
-      let response = await runModel(history, conversation);
-      if (response.role === "tool") {
-        response = await runModel(history, conversation);
-      }
+    const response = await chatAction(
+      ctx.chat,
+      "typing",
+      async () => {
+        let [firstResponse, latestResponse] = await runModel(
+          history,
+          conversation,
+        );
+        while (latestResponse.role === "tool") {
+          const functionCall = message(firstResponse).getCombinedContent();
+          if (functionCall && functionCall.length > 0) {
+            await sendMarkdownMessage(ctx.chat.id, functionCall, {
+              message_thread_id:
+                ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+                  ? Number(messageThreadId)
+                  : undefined,
+              reply_parameters: {
+                chat_id: ctx.chat.id,
+                message_id: ctx.msg.message_id,
+                allow_sending_without_reply: true,
+              },
+            });
+          }
 
-      console.log("History:", inspect(history, true, 10, true));
-      console.log("Conversation:", inspect(conversation, true, 10, true));
+          [firstResponse, latestResponse] = await runModel(
+            history,
+            conversation,
+          );
+        }
 
-      return response;
-    });
+        // console.log("History:", inspect(history, true, 10, true));
+        // console.log("Conversation:", inspect(conversation, true, 10, true));
+
+        return latestResponse;
+      },
+      {
+        message_thread_id:
+          ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+            ? Number(messageThreadId)
+            : undefined,
+      },
+    );
 
     const responseContent = message(response).getCombinedContent()!;
+    await sendMarkdownMessage(ctx.chat.id, responseContent, {
+      message_thread_id:
+        ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+          ? Number(messageThreadId)
+          : undefined,
+      reply_parameters: {
+        chat_id: ctx.chat.id,
+        message_id: ctx.msg.message_id,
+        allow_sending_without_reply: true,
+      },
+    });
 
     if (ctx.msg.voice || ctx.msg.video_note) {
       await chatAction(
         ctx.chat,
         "record_voice",
-        async (input) => {
+        async () => {
           const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 
           // generate speech for response
           const mp3 = await openai.audio.speech.create({
-            input,
+            input: responseContent,
             model: "tts-1-hd",
             voice: "alloy",
           });
@@ -454,7 +408,7 @@ bot
             Buffer.from(await mp3.arrayBuffer()),
           );
           const boostVolumeCommand = await Command(
-            `ffmpeg -i "${speechFilePath}" -filter:a "volume=4dB" ${processedSpeechFilePath}`,
+            `ffmpeg -i "${speechFilePath}" -filter:a "volume=6dB" ${processedSpeechFilePath}`,
           ).run();
           console.log(boostVolumeCommand);
 
@@ -476,21 +430,14 @@ bot
           await fs.promises.unlink(speechFilePath);
           await fs.promises.unlink(processedSpeechFilePath);
         },
-        responseContent,
+        {
+          message_thread_id:
+            ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
+              ? Number(messageThreadId)
+              : undefined,
+        },
       );
     }
-
-    await sendMarkdownMessage(ctx.chat.id, responseContent, {
-      message_thread_id:
-        ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-          ? Number(messageThreadId)
-          : undefined,
-      reply_parameters: {
-        chat_id: ctx.chat.id,
-        message_id: ctx.msg.message_id,
-        allow_sending_without_reply: true,
-      },
-    });
 
     // START topic renaming
     if (ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID) {
@@ -500,7 +447,7 @@ bot
         const openai = new OpenAIChatApi(
           { apiKey: Env.OPENAI_API_KEY },
           {
-            model: "gpt-3.5-turbo",
+            model: "gpt-3.5-turbo-0125",
           },
         );
         const response = await zodGPT.completion(

@@ -1,12 +1,21 @@
 import { fmt, italic } from "@grammyjs/parse-mode";
+import { createId } from "@paralleldrive/cuid2";
 import decodeQR from "@paulmillr/qr/decode";
 import { hyper, hyperStore } from "ai/hyper";
+import * as GoogleSearch from "api/google-search";
+import { Command } from "bot/command";
+import { calculateDetailAmounts } from "common/image-processing";
 import fs from "fs";
 import got from "got";
 import { Api } from "grammy";
 import Jimp from "jimp";
+import { joinImages } from "join-images";
+import { evaluate } from "mathjs";
 import OpenAI from "openai";
+import path from "path";
+import puppeteer from "puppeteer";
 import { Env } from "secrets/env";
+import sharp, { Sharp } from "sharp";
 import { encoding_for_model } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
@@ -18,12 +27,11 @@ export const functions = hyperStore({
     description: "Run OpenAI GPT-4 Vision on the image",
     args: {
       input: z.string().describe("The image_url to give to the GPT-4V model"),
-      prompt: z.string().describe("Prompt text to instruct the GPT-4V model"),
-      is_local: z.boolean().describe("Whether image is uploaded locally"),
+      usage: z.string().describe("Description of intended purpose"),
     },
-    async handler({ input, prompt, is_local }) {
+    async handler({ input, usage }) {
       let url = input;
-      if (is_local) {
+      if (url.startsWith("data/file")) {
         url = await fs.promises.readFile(input, { encoding: "base64" });
         url = `data:image/png;base64,${url}`;
       }
@@ -32,8 +40,15 @@ export const functions = hyperStore({
         max_tokens: 2048,
         messages: [
           {
+            role: "system",
             content: [
-              { text: prompt, type: "text" },
+              "You are an image analysis model, intended for:",
+              usage,
+            ].join("\n"),
+          },
+          {
+            content: [
+              { text: "Analyze the image in detail", type: "text" },
               {
                 image_url: {
                   url,
@@ -48,7 +63,7 @@ export const functions = hyperStore({
       });
       console.log("Completion:", inspect(completion.choices, true, 10, true));
 
-      return completion.choices[0].message;
+      return completion.choices[0].message.content;
     },
   }),
   generate_image: hyper({
@@ -59,12 +74,7 @@ export const functions = hyperStore({
         .describe("Prompt text, almost exactly what user requests for"),
       quality: z.enum(["standard", "hd"]),
       size: z.enum(["1024x1024", "1792x1024", "1024x1792"]),
-      style: z
-        .enum(["vivid", "natural"])
-        .describe(
-          "The style of the generated images. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images.",
-        )
-        .optional(),
+      style: z.enum(["vivid", "natural"]).optional(),
       chat_id: z.string().describe("Chat which originated the request"),
       thread_id: z.string().describe("Thread which originated the request"),
     },
@@ -106,6 +116,134 @@ export const functions = hyperStore({
       return response;
     },
   }),
+  process_video: hyper({
+    description: "Analyze frames from a video using GPT-4V",
+    args: {
+      file_path: z.string().describe("Video file path"),
+      is_video_note: z.enum(["true", "false"]),
+    },
+    async handler({ file_path, is_video_note }) {
+      const videoNote = is_video_note === "true";
+
+      const fileId = createId();
+
+      const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
+      const stitchedFramesOutputPath = path.join(
+        process.cwd(),
+        `${fileId}.png`,
+      );
+
+      // extract frames
+      await fs.promises.mkdir(framesOutputPath);
+      await Command(
+        `ffmpeg -i ${file_path} -vf fps=30 ${framesOutputPath}/%d.png`,
+      ).run();
+
+      const videoFramePaths = await fs.promises
+        .readdir(framesOutputPath)
+        .then((filenames) =>
+          filenames
+            .sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]))
+            .map((filename) => path.join(framesOutputPath, filename)),
+        );
+
+      const selectedFramePaths: string[] = [];
+      const windowSize = 30;
+      const skip = 15;
+      for (
+        let i = 0;
+        i <= videoFramePaths.length - windowSize + skip;
+        i += skip
+      ) {
+        const laplacianVariances = await calculateDetailAmounts(
+          videoFramePaths.slice(i, i + windowSize),
+        );
+        selectedFramePaths.push(
+          laplacianVariances[laplacianVariances.length - 1].imagePath,
+        );
+      }
+
+      const processedFrames: Sharp[] = [];
+
+      if (videoNote) {
+        // remove white border
+        for (const vfpath of selectedFramePaths) {
+          const rect = Buffer.from(
+            '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
+          );
+          const image = sharp(vfpath)
+            .resize(300, 300)
+            .png()
+            .composite([{ input: rect, blend: "dest-in" }]);
+          processedFrames.push(image);
+        }
+      } else {
+        for (const vfpath of selectedFramePaths) {
+          processedFrames.push(sharp(vfpath));
+        }
+      }
+
+      processedFrames.map((f) => f.jpeg());
+
+      // stitch frames together
+      const stitchedFrames = await joinImages(
+        await Promise.all(processedFrames.map((frame) => frame.toBuffer())),
+        {
+          direction: "horizontal",
+        },
+      );
+      await stitchedFrames.toFile(stitchedFramesOutputPath);
+      const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
+        encoding: "base64",
+      });
+
+      // get last 60 frames (1 second = 30 frames)
+      // const lastFewFrames = videoFramePaths.slice(-60);
+
+      // store "clearness" of frames. the higher the variance, the clearer the image.
+      // const laplacianVariances = await calculateDetailAmounts(lastFewFrames);
+
+      // console.log(laplacianVariances);
+
+      // save image which prompted the response
+      const lastFramePath = `data/file/${fileId}.last.png`;
+      await processedFrames[processedFrames.length - 1].toFile(lastFramePath);
+
+      // delete temp folders
+      await Promise.all([
+        fs.promises.rm(framesOutputPath, { force: true, recursive: true }),
+        fs.promises.rm(stitchedFramesOutputPath),
+      ]);
+
+      // ask GPT-4 to describe video, with audio transcript
+      const completion = await openai.chat.completions.create({
+        max_tokens: 2048,
+        messages: [
+          {
+            content: [
+              {
+                text: `The image shows video frames in sequence. Describe what's likely going on in each frame.`,
+                type: "text",
+              },
+              {
+                image_url: {
+                  url: `data:image/jpeg;base64,${framestrip}`,
+                },
+                type: "image_url",
+              },
+            ],
+            role: "user",
+          },
+        ],
+        model: "gpt-4-vision-preview",
+      });
+
+      return [
+        completion.choices[0].message.content,
+        `Analyze the video's last frame to better respond to the transcript: ${lastFramePath}`,
+      ].join("\n");
+    },
+  }),
   get_crypto_data: hyper({
     description:
       "Get crypto data from CoinGecko's Public API (https://api.coingecko.com/api/v3)",
@@ -127,57 +265,84 @@ export const functions = hyperStore({
   }),
   search_google: hyper({
     description:
-      "Get relevant search results from Google in JSON format. Use this to answer questions that require searching the web.",
+      "Get relevant search results from Google in JSON format. Use this to answer questions that require browsing the web/up to date info.",
     args: {
       query: z.string().describe("Search query"),
+      gl: z.string().describe("two-letter country code").optional(),
+      link_site: z
+        .string()
+        .describe("Site URL to limit search results to")
+        .optional(),
+      search_type: z
+        .enum(["image"])
+        .describe("Specifies the search type")
+        .optional(),
     },
-    async handler({ query }) {
+    async handler({ query, gl, link_site, search_type }) {
+      const params = new URLSearchParams({
+        cx: Env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID,
+        key: Env.GOOGLE_CUSTOM_SEARCH_API_KEY,
+        q: query,
+      });
+      if (gl) params.append("gl", gl);
+      if (link_site) params.append("linkSite", link_site);
+      if (search_type) params.append("searchType", search_type);
       const res = await got(
-        `https://customsearch.googleapis.com/customsearch/v1?cx=${Env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID}&key=${Env.GOOGLE_CUSTOM_SEARCH_API_KEY}&q=${query}`,
-      ).json<{ items: { link: string; snippet: string; title: string }[] }>();
+        `https://customsearch.googleapis.com/customsearch/v1?` + params,
+      ).json<GoogleSearch.Root>();
       // console.log("Google Search Response:", inspect(res, true, 10, true));
 
-      const results: unknown[] = [];
+      const results: {
+        title: string;
+        link: string;
+        snippet: string;
+        content?: string;
+      }[] = res.items.map(({ title, link, snippet }) => ({
+        title,
+        link,
+        snippet,
+      }));
 
       // get first result contents
-      const firstResultContents = await got(res.items[0].link).text();
-      // limit content length to fit context size for model
-      const encoder = encoding_for_model("gpt-3.5-turbo-0125");
-      const encoded = encoder.encode(firstResultContents);
-      const truncatedToFitModelContextLength = encoded.slice(20, 4096 + 20);
-      const firstResultTruncated = new TextDecoder().decode(
-        encoder.decode(truncatedToFitModelContextLength),
-      );
+      const firstResult = res.items.shift();
+      if (firstResult) {
+        try {
+          const browser = await puppeteer.launch({
+            headless: true,
+            defaultViewport: null,
+            userDataDir: path.join(process.cwd(), "data", "browser"),
+          });
+          const page = (await browser.pages())[0];
+          await page.goto(firstResult.link, {
+            waitUntil: "domcontentloaded",
+          });
+          const firstResultContents = await page.$eval(
+            "*",
+            (el) => el.innerText,
+          );
+          console.log(inspect(firstResultContents, true, 10, true));
+          // only one instance of pptr can be running at one time
+          await browser.close();
 
-      const completion = await openai.chat.completions.create({
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Summarize the following webpage:",
-              },
-              { type: "text", text: firstResultTruncated },
-              {
-                type: "text",
-                text: "Respond with just the pure content in text form.",
-              },
-            ],
-          },
-        ],
-        model: "gpt-3.5-turbo-0125",
-      });
-      results.push(completion.choices[0].message.content);
+          // limit content length to fit context size for model
+          const encoder = encoding_for_model("gpt-3.5-turbo-0125");
+          const encoded = encoder.encode(firstResultContents);
+          const truncatedToFitModelContextLength = encoded.slice(
+            100,
+            4096 + 100,
+          );
+          const firstResultTruncated = new TextDecoder().decode(
+            encoder.decode(truncatedToFitModelContextLength),
+          );
+          // free up memory
+          encoder.free();
 
-      console.log(results);
-
-      for (const item of res.items) {
-        results.push({
-          link: item.link,
-          snippet: item.snippet,
-          title: item.title,
-        });
+          if (firstResultTruncated.length > 0) {
+            results[0].content = firstResultTruncated;
+          }
+        } catch (e) {
+          console.error(e);
+        }
       }
 
       return results;
@@ -202,7 +367,11 @@ export const functions = hyperStore({
         .describe("Request input URL, including query params and paths."),
     },
     async handler({ body, method, url }) {
-      return await got(url, { body, method }).json();
+      try {
+        return await got(url, { body, method }).json();
+      } catch (e) {
+        console.error(e);
+      }
     },
   }),
   read_qr_code: hyper({
@@ -214,6 +383,154 @@ export const functions = hyperStore({
       const img = await Jimp.read(image_url);
       const decoded = decodeQR(img.bitmap);
       return decoded;
+    },
+  }),
+  math: hyper({
+    description: "Perform arithmetic operation using math.js",
+    args: {
+      expr: z.string().describe("Expression to evaluate"),
+    },
+    handler({ expr }) {
+      return evaluate(expr);
+    },
+  }),
+  get_weather_forecast: hyper({
+    description: "Retrieve weather forecast data",
+    args: {
+      lat: z.string().describe("Latitude, decimal (-90; 90)."),
+      lon: z.string().describe("Longitude, decimal (-180; 180)."),
+      include: z.enum(["current", "minutely", "hourly", "daily", "alerts"]),
+    },
+    async handler({ lat, lon, include }) {
+      const metrics = ["current", "minutely", "hourly", "daily", "alerts"];
+      return await got(
+        `https://api.openweathermap.org/data/3.0/onecall?lat=${lat}&lon=${lon}&units=metric&exclude=${metrics.filter((metric) => metric !== include)}&appid=${Env.OPENWEATHER_API_KEY}`,
+      ).json();
+    },
+  }),
+  get_singapore_metrological_data: hyper({
+    description: "Get weather data in Singapore",
+    args: {
+      kind: z.enum([
+        "rainfall",
+        "relative-humidity",
+        "air-temperature",
+        "wind-speed",
+        "wind-direction",
+      ]),
+      date_time: z
+        .string()
+        .describe(
+          "Latest available data as of now, YYYY-MM-DD[T]HH:mm:ss format",
+        ),
+    },
+    async handler({ kind, date_time }) {
+      return (
+        await got(
+          `https://api.data.gov.sg/v1/environment/${kind}?date_time=${date_time}`,
+        ).json<{ metadata: { stations: unknown[] } }>()
+      ).metadata.stations;
+    },
+  }),
+  geocode: hyper({
+    description: "Get coordinates from location name",
+    args: {
+      q: z
+        .string()
+        .describe(
+          "City name, state code (only for the US) and country code divided by comma. Please use ISO 3166 country codes.",
+        ),
+    },
+    async handler({ q }) {
+      return await got(
+        `http://api.openweathermap.org/geo/1.0/direct?q=${q}&appid=${Env.OPENWEATHER_API_KEY}`,
+      ).json();
+    },
+  }),
+  reverse_geocode: hyper({
+    description: "Get location name from coordinates",
+    args: {
+      lat: z.string().describe("Latitude"),
+      lon: z.string().describe("Longitude"),
+    },
+    async handler({ lat, lon }) {
+      return await got(
+        `http://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&appid=${Env.OPENWEATHER_API_KEY}`,
+      ).json();
+    },
+  }),
+  extract_receipt_data: hyper({
+    description:
+      "Extract receipt/invoice data from image, to be used to split the bill",
+    args: {
+      image: z.string().describe("The image_url with the receipt"),
+    },
+    async handler({ image }) {
+      let url = image;
+      if (url.startsWith("data/file")) {
+        url = await fs.promises.readFile(url, { encoding: "base64" });
+        url = `data:image/png;base64,${url}`;
+      }
+
+      const completion = await openai.chat.completions.create({
+        max_tokens: 2048,
+        messages: [
+          {
+            content: "You are a receipt/invoice reader.",
+            role: "system",
+          },
+          {
+            content: [
+              {
+                text: "Extract all data from the image",
+                type: "text",
+              },
+              {
+                image_url: {
+                  url,
+                },
+                type: "image_url",
+              },
+            ],
+            role: "user",
+          },
+        ],
+        model: "gpt-4-vision-preview",
+      });
+
+      return [
+        completion.choices[0].message.content!,
+        "Use the math function to split the bill",
+      ].join("\n");
+    },
+  }),
+  get_temasek_poly_class_schedule: hyper({
+    description: "Get C23B04 class schedule",
+    args: {},
+    async handler() {
+      return `
+      Format:
+      <day>
+      <start-time - end-time> <class-name>. <classcode>, <type>, <venue>, <tutorial-group>, <from-week, to-week>, <lecturer[. phone]>
+      
+      Mon
+      11:00 - 13:00 Agile Methodology and Design Thinking. AMDT,  Practical,  Classroom. 03-07-50,  AMDT PC04,  1-7, 11-17,  Dion Ang. 67805305,
+      14:00 - 16:00 Mobile App Development. MBAP,  Practical,  Classroom. 01-06-61,  MBAP PC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,
+      16:00 - 18:00 Application Security. APSEC,  Practical,  Classroom. 01-06-61,  APSEC PC04,  1-7, 11-17,  Kelvin  Soo Meng Goh,
+      18:00 - 19:00 Global Studies. GS,  E-learning,  ,  GS EC04,  1-7, 11-17,  Siang Jin Lee. 67805981,
+      Tue
+      09:00 - 11:00 Innovation & Entrepreneurship. INNOVA,  Tutorial,  Audio Visual Room. 26-04-10,  Innova TC04,  1-7, 11-17,  Samantha Quek,
+      11:00 - 13:00 Global Studies. GS,  Tutorial,  Audio Visual Room. 26-04-10,  GS TC04,  1-7, 11-17,  Siang Jin Lee. 67805981,
+      14:00 - 16:00 Effective Communication. ECOMM,  Tutorial,  Classroom. 03-06-56,  EComm TC04,  1-7, 11-17,  Joshua Chan. 67806410,
+      Wed
+      11:00 - 13:00 Mobile App Development. MBAP,  Practical,  Classroom 05-08. 04-05-90,  MBAP PC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,
+      14:00 - 18:00 Cloud Application Development. CADV,  Practical,  Classroom. 03-08-29,  CADV PC04,  1-7, 11-17,  Su Yi Lam. 67806938,
+      Thu
+      09:00 - 11:00 Application Security. APSEC,  Practical,  Classroom. 03-07-51,  APSEC PC04,  1-7, 11-17,  Kelvin  Soo Meng Goh,
+      11:00 - 13:00 Agile Methodology and Design Thinking. AMDT,  Practical,  Classroom. 03-07-51,  AMDT PC04,  1-7, 11-17,  Dion Ang. 67805305,
+      14:00 - 15:00 Leadership in Action. LEADACT,  Tutorial,  Classroom. 03-07-50/2,  LEADACT TC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,
+      15:00 - 16:00 Care Person Hour. CPHour,  Tutorial,  ,  CPH_J TC04,  1-7, 11-17,  Nur Amira Natasha Binte Abdul Malek,
+      18:00 - 19:00 Effective Communication. ECOMM,  E-learning,  ,  EComm EC04,  1-7, 11-17,  Joshua Chan. 67806410,`;
     },
   }),
 });
