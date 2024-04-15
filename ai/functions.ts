@@ -385,7 +385,8 @@ export const functions = hyperStore({
           });
           const firstResultContents = await page.$eval(
             "*",
-            (el) => el.innerText,
+            (el) =>
+              el.innerText + el.getAttribute("href") + el.getAttribute("src"),
           );
           console.log(inspect(firstResultContents, true, 10, true));
           // only one instance of pptr can be running at one time

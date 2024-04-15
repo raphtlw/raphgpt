@@ -22,6 +22,7 @@ export const envSchema = z.object({
   TELEGRAM_DEV_CHAT_CHAT_ID: z.string(),
   TELEGRAM_GPT4_CHAT_ID: z.string(),
   TELEGRAM_OPENAI_CHAT_ID: z.string(),
+  TELEGRAM_SAFE_ZONE_CHAT_ID: z.string(),
 });
 
 export const Env = envSchema.parse(process.env);
