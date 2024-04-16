@@ -284,8 +284,8 @@ bot
     }
 
     // store thread ID here
-    let messageThreadId: string | undefined =
-      ctx.msg.message_thread_id?.toString();
+    let messageThreadId: string =
+      ctx.msg.message_thread_id?.toString() || ctx.msg.message_id.toString();
 
     // if message has no thread, create one (in OpenAI chat)
     if (
@@ -299,12 +299,12 @@ bot
     const messageHistory = await db.query.openaiMessages.findMany({
       where: and(
         eq(openaiMessages.telegramChatId, ctx.chat.id.toString()),
-        messageThreadId
-          ? eq(openaiMessages.telegramThreadId, messageThreadId)
-          : undefined,
+        eq(openaiMessages.telegramThreadId, messageThreadId),
       ),
       orderBy: asc(openaiMessages.created),
     });
+
+    console.log(messageHistory);
 
     let history = new Conversation(
       messageHistory.map((msg) => JSON.parse(msg.json)),
@@ -317,9 +317,9 @@ bot
     history.addSystem(
       "You are a friendly and helpful assistant named RaphGPT.",
       "You have eyes and can see. Whenever photo/image, you say vision",
+      "You can watch videos.",
       "Telegram supports location sharing. Just ask the user to send it.",
       `It is currently ${new Date().toLocaleString()}`,
-      `Current chat chat_id=${ctx.chat.id} thread_id=${messageThreadId}`,
     );
 
     history.addUserInstructions(
@@ -327,7 +327,6 @@ bot
       ctx.from.first_name,
       "You are RaphGPT, an autononous AI developed by @raphtlw.",
       "Please use the tools you have at your disposal",
-      `message_id=${cachedMessage.id}`,
     );
 
     const conversation = new Conversation([draft.get()]);
@@ -339,6 +338,7 @@ bot
         let [firstResponse, latestResponse] = await runModel(
           history,
           conversation,
+          { messageId: cachedMessage.id },
         );
         while (latestResponse.role === "tool") {
           const functionCall = message(firstResponse).getCombinedContent();
@@ -359,6 +359,7 @@ bot
           [firstResponse, latestResponse] = await runModel(
             history,
             conversation,
+            { messageId: cachedMessage.id },
           );
         }
 
@@ -562,6 +563,7 @@ devChatGroup.command(["l", "L", "w", "W"], async (ctx, next) => {
       .values({
         id: createId(),
         telegramUserId: ctx.msg.reply_to_message.from.id.toString(),
+        telegramChatId: ctx.chat.id.toString(),
         [operation]: 1,
         fromMessage: await db.query.messages
           .findFirst({
@@ -634,6 +636,7 @@ devChatGroup.command(["scoreboard", "score"], async (ctx, next) => {
       win: sql<number>`IFNULL(SUM(${guss.win}), 0)`.mapWith(Number),
     })
     .from(guss)
+    .where(eq(guss.telegramChatId, ctx.chat.id.toString()))
     .groupBy(sql`${guss.telegramUserId}`);
 
   const message: FormattedString[] = [fmt`${bold("SCOREBOARD")}`];
@@ -679,306 +682,6 @@ await bot.api.setMyCommands(
     scope: { type: "chat", chat_id: Env.TELEGRAM_DEV_CHAT_CHAT_ID },
   },
 );
-
-bot
-  .chatType(["group", "supergroup"])
-  .filter(
-    (ctx) =>
-      ctx.chat.id.toString() === Env.TELEGRAM_SAFE_ZONE_CHAT_ID &&
-      (ctx.hasCommand("safe") || ctx.msg?.reply_to_message?.from?.id === ME.id),
-  )
-  .on("message", async (ctx, next) => {
-    const draft = new DraftMessage();
-
-    // get cached message
-    const cachedMessage = await db.query.messages.findFirst({
-      where: eq(messages.telegramId, ctx.msg.message_id.toString()),
-    });
-    assert(cachedMessage);
-
-    let cachedFile = cachedMessage.file;
-
-    if (cachedFile) {
-      cachedFile = path.join(process.cwd(), "data", "file", cachedFile);
-    }
-
-    if (ctx.msg.text) {
-      draft.add({
-        type: "text",
-        text: ctx.msg.text,
-      });
-    }
-    if (ctx.msg.location) {
-      draft.add({
-        type: "text",
-        text: JSON.stringify(ctx.msg.location),
-      });
-    }
-    if (ctx.msg.photo) {
-      draft.add({
-        type: "text",
-        text: `Photo file path: ${cachedMessage.file}`,
-      });
-    }
-    if (ctx.msg.voice) {
-      const transcription = await transcribeAudio(cachedFile!);
-
-      draft.add({
-        type: "text",
-        text: transcription,
-      });
-    }
-    if (ctx.msg.video_note || ctx.msg.video) {
-      const audioOutputPath = path.join(
-        process.cwd(),
-        "data",
-        "file",
-        `${ctx.msg.message_id}.mp3`,
-      );
-
-      // extract audio from video
-      const extractAudioCommand = await Command(
-        `ffmpeg -i "${cachedFile}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
-      ).run();
-      console.log(extractAudioCommand);
-
-      // create transcription
-      const transcription = await transcribeAudio(audioOutputPath);
-
-      // delete generated file
-      await fs.promises.rm(audioOutputPath);
-
-      draft.add({
-        type: "text",
-        text: transcription,
-      });
-      draft.add({
-        type: "text",
-        text: `Video file path:${cachedMessage.file}`,
-      });
-    }
-    if (ctx.msg.sticker) {
-      // TODO: improve sticker processing
-      draft.add({ type: "text", text: JSON.stringify(ctx.msg.sticker) });
-    }
-    if (ctx.msg.caption) {
-      draft.add({
-        type: "text",
-        text: ctx.msg.caption,
-      });
-    }
-
-    // store thread ID here
-    let messageThreadId: string | undefined =
-      ctx.msg.message_thread_id?.toString();
-
-    // if message has no thread, create one (in OpenAI chat)
-    if (
-      !messageThreadId &&
-      ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-    ) {
-      const newTopic = await ctx.createForumTopic("New chat");
-      messageThreadId = newTopic.message_thread_id.toString();
-    }
-
-    const messageHistory = await db.query.openaiMessages.findMany({
-      where: and(
-        eq(openaiMessages.telegramChatId, ctx.chat.id.toString()),
-        messageThreadId
-          ? eq(openaiMessages.telegramThreadId, messageThreadId)
-          : undefined,
-      ),
-      orderBy: asc(openaiMessages.created),
-    });
-
-    let history = new Conversation(
-      messageHistory.map((msg) => JSON.parse(msg.json)),
-    );
-
-    if (ctx.chat.id.toString() === Env.TELEGRAM_GPT4_CHAT_ID) {
-      history = history.takeLast(10);
-    }
-
-    history.addSystem(
-      "You are a friendly and helpful assistant named RaphGPT.",
-      "You have eyes and can see. Whenever photo/image, you say vision",
-      "Telegram supports location sharing. Just ask the user to send it.",
-      `It is currently ${new Date().toLocaleString()}`,
-      `Current chat chat_id=${ctx.chat.id} thread_id=${messageThreadId}`,
-    );
-
-    history.addUserInstructions(
-      "My name is",
-      ctx.from.first_name,
-      "You are RaphGPT, an autononous AI developed by @raphtlw.",
-      "Please use the tools you have at your disposal",
-      `message_id=${cachedMessage.id}`,
-    );
-
-    const conversation = new Conversation([draft.get()]);
-
-    const response = await chatAction(
-      ctx.chat,
-      "typing",
-      async () => {
-        let [firstResponse, latestResponse] = await runModel(
-          history,
-          conversation,
-        );
-        while (latestResponse.role === "tool") {
-          const functionCall = message(firstResponse).getCombinedContent();
-          if (functionCall && functionCall.length > 0) {
-            await sendMarkdownMessage(ctx.chat.id, functionCall, {
-              message_thread_id:
-                ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-                  ? Number(messageThreadId)
-                  : undefined,
-              reply_parameters: {
-                chat_id: ctx.chat.id,
-                message_id: ctx.msg.message_id,
-                allow_sending_without_reply: true,
-              },
-            });
-          }
-
-          [firstResponse, latestResponse] = await runModel(
-            history,
-            conversation,
-          );
-        }
-
-        return latestResponse;
-      },
-      {
-        message_thread_id:
-          ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-            ? Number(messageThreadId)
-            : undefined,
-      },
-    );
-
-    const responseContent = message(response).getCombinedContent()!;
-    await sendMarkdownMessage(ctx.chat.id, responseContent, {
-      message_thread_id:
-        ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-          ? Number(messageThreadId)
-          : undefined,
-      reply_parameters: {
-        chat_id: ctx.chat.id,
-        message_id: ctx.msg.message_id,
-        allow_sending_without_reply: true,
-      },
-    });
-
-    if (ctx.msg.voice || ctx.msg.video_note) {
-      await chatAction(
-        ctx.chat,
-        "record_voice",
-        async () => {
-          const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
-
-          // generate speech for response
-          const mp3 = await openai.audio.speech.create({
-            input: responseContent,
-            model: "tts-1-hd",
-            voice: "alloy",
-          });
-          const uniqueFileName = `${timestamp()}_speech`;
-          const speechFilePath = path.join(
-            process.cwd(),
-            `${uniqueFileName}.mp3`,
-          );
-          const processedSpeechFilePath = path.join(
-            process.cwd(),
-            `${uniqueFileName}_processed.mp3`,
-          );
-
-          await fs.promises.writeFile(
-            speechFilePath,
-            Buffer.from(await mp3.arrayBuffer()),
-          );
-          const boostVolumeCommand = await Command(
-            `ffmpeg -i "${speechFilePath}" -filter:a "volume=6dB" ${processedSpeechFilePath}`,
-          ).run();
-          console.log(boostVolumeCommand);
-
-          await ctx.replyWithVoice(
-            new InputFile(fs.createReadStream(processedSpeechFilePath)),
-            {
-              message_thread_id:
-                ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-                  ? Number(messageThreadId)
-                  : undefined,
-              reply_parameters: {
-                chat_id: ctx.chat.id,
-                message_id: ctx.msg.message_id,
-                allow_sending_without_reply: true,
-              },
-            },
-          );
-
-          await fs.promises.unlink(speechFilePath);
-          await fs.promises.unlink(processedSpeechFilePath);
-        },
-        {
-          message_thread_id:
-            ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-              ? Number(messageThreadId)
-              : undefined,
-        },
-      );
-    }
-
-    // START topic renaming
-    if (ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID) {
-      // check if message is part of the topic created
-      // then assign a good name for the topic
-      if (messageHistory.length === 0) {
-        const openai = new OpenAIChatApi(
-          { apiKey: Env.OPENAI_API_KEY },
-          {
-            model: "gpt-3.5-turbo-0125",
-          },
-        );
-        const response = await zodGPT.completion(
-          openai,
-          [
-            JSON.stringify(conversation.get()),
-            "Summarize the conversation in 6 words or fewer",
-          ].join("\n"),
-          {
-            schema: z.object({
-              title: z
-                .string()
-                .describe(
-                  "Summarization which best describes the chat's contents",
-                ),
-            }),
-          },
-        );
-        debugPrint(response);
-        await bot.api.editForumTopic(ctx.chat.id, Number(messageThreadId), {
-          name: response.data.title,
-        });
-      }
-    }
-    // END topic rename
-
-    await db.insert(openaiMessages).values(
-      conversation.get().map((msg) => ({
-        id: createId(),
-        telegramChatId: ctx.chat.id.toString(),
-        telegramThreadId: messageThreadId,
-        json: JSON.stringify(msg),
-      })),
-    );
-
-    await next();
-  });
-
-await bot.api.setMyCommands([
-  { command: "safe", description: "Talk to GPT-4. Usage: /safe <query>" },
-]);
 
 // regularGroups
 //   .chatType(["group", "supergroup"])

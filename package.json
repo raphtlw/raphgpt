@@ -17,6 +17,7 @@
     "@libsql/client": "^0.5.5",
     "@paralleldrive/cuid2": "^2.2.2",
     "@paulmillr/qr": "^0.1.1",
+    "@raphtlw/indoc": "^0.1.6",
     "@zodios/core": "^10.9.6",
     "bree": "^9.2.2",
     "date-fns": "^3.6.0",

@@ -3,13 +3,16 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-export type HyperFunctionData = {
+export type HyperFunctionData<Context> = {
   _description: string;
   _schema: z.AnyZodObject;
-  _handler: (args: unknown) => Promise<unknown> | unknown;
+  _handler: (args: unknown, context: Context) => Promise<unknown> | unknown;
 };
 
-export const hyperFunctionToTool = (name: string, data: HyperFunctionData) => {
+export const hyperFunctionToTool = <Context>(
+  name: string,
+  data: HyperFunctionData<Context>,
+) => {
   let parameters: OpenAI.FunctionParameters;
 
   const schema = zodToJsonSchema(data._schema);
@@ -38,21 +41,26 @@ export const hyperFunctionToTool = (name: string, data: HyperFunctionData) => {
 /**
  * Storage for HyperFunction(s) with associated methods
  */
-export const hyperStore = (functions: Record<string, HyperFunctionData>) => ({
+export const hyperStore = <Context>(
+  functions: Record<string, HyperFunctionData<Context>>,
+) => ({
   functions: new Map(Object.entries(functions)),
 
-  set(name: string, hf: HyperFunctionData) {
+  set(name: string, hf: HyperFunctionData<Context>) {
     this.functions.set(name, hf);
   },
 
-  async callTool(data: OpenAI.Chat.Completions.ChatCompletionMessageToolCall) {
+  async callTool(
+    data: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
+    context: Context,
+  ) {
     const hyperFunction = this.functions.get(data.function.name);
     assert(hyperFunction);
 
     const args = hyperFunction._schema.parse(
       JSON.parse(data.function.arguments),
     );
-    const response = hyperFunction._handler(args);
+    const response = hyperFunction._handler(args, context);
 
     if (response instanceof Promise) return await response;
     return response;
@@ -70,6 +78,7 @@ export const hyperStore = (functions: Record<string, HyperFunctionData>) => ({
  */
 export const hyper = <
   Args extends Record<string, z.ZodFirstPartySchemaTypes>,
+  Context,
   Return,
 >({
   description,
@@ -78,13 +87,14 @@ export const hyper = <
 }: {
   description: string;
   args: Args;
-  handler: (args: { [K in keyof Args]: z.infer<Args[K]> }) =>
-    | Promise<Return>
-    | Return;
-}): HyperFunctionData => {
+  handler: (
+    args: { [K in keyof Args]: z.infer<Args[K]> },
+    context: Context,
+  ) => Promise<Return> | Return;
+}): HyperFunctionData<Context> => {
   return {
     _schema: z.object(args),
-    _handler: handler as (args: unknown) => unknown,
+    _handler: handler as (args: unknown, context: unknown) => unknown,
     _description: description,
   };
 };

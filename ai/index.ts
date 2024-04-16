@@ -1,5 +1,5 @@
 import { code, fmt, underline } from "@grammyjs/parse-mode";
-import { functions } from "ai/functions";
+import { ContextType, functions } from "ai/functions";
 import fs from "fs";
 import { Api } from "grammy";
 import OpenAI from "openai";
@@ -55,6 +55,25 @@ export const message = (inner: Message) => ({
     }
   },
 });
+
+export const combineMessageContent = (message: Message) => {
+  if (typeof message.content === "string") {
+    return message.content;
+  } else if (Array.isArray(message.content)) {
+    const content: string[] = [];
+    for (const part of message.content) {
+      if (part.type === "text") {
+        content.push(part.text);
+      }
+      if (part.type === "image_url") {
+        content.push(`image_url: ${part.image_url.url}`);
+      }
+    }
+    return content.join(String.fromCharCode(32));
+  } else {
+    return null;
+  }
+};
 
 export class Conversation {
   constructor(private messages: Message[] = []) {}
@@ -115,6 +134,7 @@ export class Conversation {
 export const runModel = async (
   history: Conversation,
   current: Conversation,
+  context: ContextType,
 ) => {
   const prompt = current.peek();
   const promptContent = message(prompt).getCombinedContent();
@@ -164,7 +184,7 @@ export const runModel = async (
 
       try {
         // get response from function call
-        const response = await functions.callTool(toolCall);
+        const response = await functions.callTool(toolCall, context);
 
         console.log(
           "Result from function call",

@@ -32,6 +32,7 @@ export const openaiMessages = sqliteTable("openai_messages", {
 export const guss = sqliteTable("guss", {
   id: text("id").primaryKey(),
   telegramUserId: text("telegram_user_id").notNull(),
+  telegramChatId: text("telegram_chat_id").notNull(),
   loss: int("loss").default(0),
   win: int("win").default(0),
   fromMessage: text("from_message").references(() => messages.id),
