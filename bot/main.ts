@@ -395,7 +395,6 @@ bot
           history,
           combineMessageContent(draft.get())!,
         );
-        console.log("Improved prompt:", improvedPrompt);
         conversation.add({
           role: "user",
           content: [
@@ -403,6 +402,8 @@ bot
             { type: "text", text: combineMessageContent(draft.get())! },
           ],
         });
+
+        console.log("Improved prompt:", improvedPrompt);
 
         let modelResponse: MessageParam;
         let shouldContinue: boolean;
