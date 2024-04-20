@@ -9,38 +9,47 @@ import {
 } from "@grammyjs/parse-mode";
 import { run, sequentialize } from "@grammyjs/runner";
 import { createId } from "@paralleldrive/cuid2";
+import { ind } from "@raphtlw/indoc";
 import {
   Conversation,
   DraftMessage,
-  message,
+  MessageParam,
+  combineMessageContent,
+  openai,
   runModel,
   transcribeAudio,
 } from "ai";
+import { functions } from "ai/functions";
 import assert from "assert";
+import { BROWSER } from "bot/browser";
 import { Command } from "bot/command";
-import { debugPrint } from "bot/debug";
 import { sendMarkdownMessage } from "bot/message";
 import { chatAction } from "bot/tasks";
 import { timestamp } from "bot/time";
+import { intlFormat } from "date-fns";
 import { db } from "db";
 import { guss, messages, openaiMessages } from "db/schema";
 import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import fs from "fs";
 import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
-import { OpenAIChatApi } from "llm-api";
+import { Message } from "grammy/types";
 import ollama from "ollama";
 import OpenAI from "openai";
 import path from "path";
 import { Env } from "secrets/env";
-import { z } from "zod";
-import zodGPT from "zod-gpt";
+import { inspect } from "util";
 
 const bot = new Bot<FileFlavor<Context>>(Env.TELEGRAM_API_KEY);
 
 bot.api.config.use(autoRetry());
 bot.api.config.use(hydrateFiles(bot.token));
 
-bot.use(sequentialize((ctx) => String(ctx.chat?.id)));
+bot.use(
+  sequentialize((ctx) => [
+    String(ctx.chat?.id),
+    String(ctx.msg?.message_thread_id),
+  ]),
+);
 
 if (!fs.existsSync("data")) {
   fs.mkdirSync("data");
@@ -60,7 +69,7 @@ bot
   .on("message:text")
   .filter(
     (ctx) =>
-      ctx.chat.id === Number(Env.TELEGRAM_BOT_UPDATES_CHAT_ID) &&
+      ctx.chat.id.toString() === Env.TELEGRAM_BOT_UPDATES_CHAT_ID &&
       ctx.msg.reply_to_message !== undefined,
     async (ctx, next) => {
       assert(ctx.msg.reply_to_message);
@@ -87,7 +96,7 @@ bot
 
 const excludingBotUpdates = bot
   .on("message")
-  .filter((ctx) => ctx.chat.id !== Number(Env.TELEGRAM_BOT_UPDATES_CHAT_ID));
+  .filter((ctx) => ctx.chat.id.toString() !== Env.TELEGRAM_BOT_UPDATES_CHAT_ID);
 
 const regularGroups = bot
   .on("message")
@@ -194,6 +203,98 @@ await bot.api.setMyCommands(
   },
 );
 
+const createDraftFromMsg = async (msg: Message) => {
+  const draft = new DraftMessage();
+
+  // get cached message
+  const cachedMessage = await db.query.messages.findFirst({
+    where: eq(messages.telegramId, msg.message_id.toString()),
+  });
+  assert(cachedMessage);
+
+  let fullCachedFilePath = cachedMessage.file;
+  if (fullCachedFilePath) {
+    fullCachedFilePath = path.join(
+      process.cwd(),
+      "data",
+      "file",
+      fullCachedFilePath,
+    );
+  }
+
+  if (msg.text) {
+    draft.add({
+      type: "text",
+      text: msg.text,
+    });
+  }
+  if (msg.location) {
+    draft.add({
+      type: "text",
+      text: JSON.stringify(msg.location),
+    });
+  }
+  if (msg.photo) {
+    draft.add({
+      type: "text",
+      text: `[image]: ${cachedMessage.file}`,
+    });
+  }
+  if (msg.voice || msg.audio) {
+    const transcription = await transcribeAudio(fullCachedFilePath!);
+
+    draft.add({
+      type: "text",
+      text: transcription,
+    });
+    draft.add({
+      type: "text",
+      text: `[audio]: ${cachedMessage.file}`,
+    });
+  }
+  if (msg.video_note || msg.video) {
+    const audioOutputPath = path.join(
+      process.cwd(),
+      "data",
+      "file",
+      `${msg.message_id}.mp3`,
+    );
+
+    // extract audio from video
+    const extractAudioCommand = await Command(
+      `ffmpeg -i "${fullCachedFilePath}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
+    ).run();
+    console.log(extractAudioCommand);
+
+    // create transcription
+    const transcription = await transcribeAudio(audioOutputPath);
+
+    // delete generated file
+    await fs.promises.rm(audioOutputPath);
+
+    draft.add({
+      type: "text",
+      text: transcription,
+    });
+    draft.add({
+      type: "text",
+      text: `[video]: ${cachedMessage.file}`,
+    });
+  }
+  if (msg.sticker) {
+    // TODO: improve sticker processing
+    draft.add({ type: "text", text: JSON.stringify(msg.sticker) });
+  }
+  if (msg.caption) {
+    draft.add({
+      type: "text",
+      text: msg.caption,
+    });
+  }
+
+  return [draft, cachedMessage.id] as const;
+};
+
 // handle all messages from OpenAI related chats
 bot
   .chatType(["group", "supergroup"])
@@ -203,97 +304,21 @@ bot
     ),
   )
   .on("message", async (ctx, next) => {
-    const draft = new DraftMessage();
-
-    // get cached message
-    const cachedMessage = await db.query.messages.findFirst({
-      where: eq(messages.telegramId, ctx.msg.message_id.toString()),
-    });
-    assert(cachedMessage);
-
-    let cachedFile = cachedMessage.file;
-
-    if (cachedFile) {
-      cachedFile = path.join(process.cwd(), "data", "file", cachedFile);
-    }
-
-    if (ctx.msg.text) {
-      draft.add({
-        type: "text",
-        text: ctx.msg.text,
-      });
-    }
-    if (ctx.msg.location) {
-      draft.add({
-        type: "text",
-        text: JSON.stringify(ctx.msg.location),
-      });
-    }
-    if (ctx.msg.photo) {
-      draft.add({
-        type: "text",
-        text: `Photo file path: ${cachedMessage.file}`,
-      });
-    }
-    if (ctx.msg.voice) {
-      const transcription = await transcribeAudio(cachedFile!);
-
-      draft.add({
-        type: "text",
-        text: transcription,
-      });
-    }
-    if (ctx.msg.video_note || ctx.msg.video) {
-      const audioOutputPath = path.join(
-        process.cwd(),
-        "data",
-        "file",
-        `${ctx.msg.message_id}.mp3`,
-      );
-
-      // extract audio from video
-      const extractAudioCommand = await Command(
-        `ffmpeg -i "${cachedFile}" -vn -ac 2 -ar 44100 -ab 320k -f mp3 ${audioOutputPath}`,
-      ).run();
-      console.log(extractAudioCommand);
-
-      // create transcription
-      const transcription = await transcribeAudio(audioOutputPath);
-
-      // delete generated file
-      await fs.promises.rm(audioOutputPath);
-
-      draft.add({
-        type: "text",
-        text: transcription,
-      });
-      draft.add({
-        type: "text",
-        text: `Video file path:${cachedMessage.file}`,
-      });
-    }
-    if (ctx.msg.sticker) {
-      // TODO: improve sticker processing
-      draft.add({ type: "text", text: JSON.stringify(ctx.msg.sticker) });
-    }
-    if (ctx.msg.caption) {
-      draft.add({
-        type: "text",
-        text: ctx.msg.caption,
-      });
-    }
-
     // store thread ID here
-    let messageThreadId: string =
-      ctx.msg.message_thread_id?.toString() || ctx.msg.message_id.toString();
+    let messageThreadId: string;
 
     // if message has no thread, create one (in OpenAI chat)
-    if (
-      !messageThreadId &&
-      ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-    ) {
+    if (ctx.msg.message_thread_id) {
+      messageThreadId = ctx.msg.message_thread_id.toString();
+    } else if (ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID) {
       const newTopic = await ctx.createForumTopic("New chat");
       messageThreadId = newTopic.message_thread_id.toString();
+      await ctx.forwardMessage(ctx.chat.id, {
+        message_thread_id: Number(messageThreadId),
+        disable_notification: true,
+      });
+    } else {
+      messageThreadId = ctx.msg.message_id.toString();
     }
 
     const messageHistory = await db.query.openaiMessages.findMany({
@@ -304,8 +329,6 @@ bot
       orderBy: asc(openaiMessages.created),
     });
 
-    console.log(messageHistory);
-
     let history = new Conversation(
       messageHistory.map((msg) => JSON.parse(msg.json)),
     );
@@ -314,40 +337,73 @@ bot
       history = history.takeLast(10);
     }
 
-    history.addSystem(
-      "You are a friendly and helpful assistant named RaphGPT.",
-      "You have eyes and can see. Whenever photo/image, you say vision",
-      "You can watch videos.",
-      "Telegram supports location sharing. Just ask the user to send it.",
-      `It is currently ${new Date().toLocaleString()}`,
-    );
+    history.append({
+      role: "system",
+      content: ind(`
+      You are a friendly and helpful assistant named RaphGPT.
+      You have eyes and can see. Whenever photo/image, you say vision.
+      You can watch videos.
+      Telegram supports location sharing. Just ask the user to send it.
 
-    history.addUserInstructions(
-      "My name is",
-      ctx.from.first_name,
-      "You are RaphGPT, an autononous AI developed by @raphtlw.",
-      "Please use the tools you have at your disposal",
-    );
+      As a Large Language Model operating on Telegram, you have been given additional
+      functions that help process media content.
+      As Telegram has modalities other than text, it is important, to process other
+      types of messages, in order to give users the best experience.
 
+      User might send the following kinds of media content:
+      - Image/photo, specified as [image]: <image_url>
+      - Audio, specified as [audio]: <audio_url>
+      - Video, specified as [video]: <video_url>
+
+      The tools/functions you have available are to be used to process the media.
+      You should call multiple tools/functions in parallel.
+      Their output is a natural language description provided by the GPT-4 vision
+      model. Respond with the image details, and say that you have successfully
+      stored the associated details.
+
+      When math functions are invoked, list all the operations you made and the
+      source of the expressions. This is to ensure the correctness of
+      your calculations.`),
+    });
+
+    history.insert({
+      role: "user",
+      content: ind(`
+      You are RaphGPT, an autononous AI developed by @raphtlw.
+      You are speaking to ${ctx.from.first_name}
+      It is currently ${intlFormat(new Date(), { dateStyle: "full", timeStyle: "full" })}`),
+    });
+
+    if (ctx.msg.reply_to_message) {
+      const [repliedTo] = await createDraftFromMsg(ctx.msg);
+      history.add(repliedTo.get());
+    }
+
+    const [draft, messageId] = await createDraftFromMsg(ctx.msg);
     const conversation = new Conversation([draft.get()]);
 
-    const response = await chatAction(
+    const modelResponse = await chatAction(
       ctx.chat,
       "typing",
       async () => {
-        let [firstResponse, latestResponse] = await runModel(
-          history,
-          conversation,
-          { messageId: cachedMessage.id },
-        );
-        while (latestResponse.role === "tool") {
-          const functionCall = message(firstResponse).getCombinedContent();
-          if (functionCall && functionCall.length > 0) {
-            await sendMarkdownMessage(ctx.chat.id, functionCall, {
-              message_thread_id:
-                ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-                  ? Number(messageThreadId)
-                  : undefined,
+        let modelResponse: MessageParam;
+        let shouldContinue: boolean;
+        do {
+          [modelResponse, shouldContinue] = await runModel(
+            history,
+            conversation,
+            {
+              messageId,
+              browser: BROWSER,
+            },
+            functions,
+            "gpt-3.5-turbo-0125",
+          );
+
+          const responseContent = combineMessageContent(modelResponse);
+          if (responseContent && responseContent.length > 0) {
+            await sendMarkdownMessage(ctx.chat.id, responseContent, {
+              message_thread_id: Number(messageThreadId),
               reply_parameters: {
                 chat_id: ctx.chat.id,
                 message_id: ctx.msg.message_id,
@@ -355,39 +411,17 @@ bot
               },
             });
           }
+        } while (shouldContinue);
 
-          [firstResponse, latestResponse] = await runModel(
-            history,
-            conversation,
-            { messageId: cachedMessage.id },
-          );
-        }
+        console.log("History:", inspect(history, true, 10, true));
+        console.log("Conversation:", inspect(conversation, true, 10, true));
 
-        // console.log("History:", inspect(history, true, 10, true));
-        // console.log("Conversation:", inspect(conversation, true, 10, true));
-
-        return latestResponse;
+        return modelResponse;
       },
       {
-        message_thread_id:
-          ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-            ? Number(messageThreadId)
-            : undefined,
+        message_thread_id: Number(messageThreadId),
       },
     );
-
-    const responseContent = message(response).getCombinedContent()!;
-    await sendMarkdownMessage(ctx.chat.id, responseContent, {
-      message_thread_id:
-        ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-          ? Number(messageThreadId)
-          : undefined,
-      reply_parameters: {
-        chat_id: ctx.chat.id,
-        message_id: ctx.msg.message_id,
-        allow_sending_without_reply: true,
-      },
-    });
 
     if (ctx.msg.voice || ctx.msg.video_note) {
       await chatAction(
@@ -396,9 +430,33 @@ bot
         async () => {
           const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 
+          const completion = await openai.chat.completions.create({
+            messages: [
+              {
+                role: "user",
+                content: ind(`
+                  The following is a model's message, to be fed into Whisper:
+                  ${combineMessageContent(modelResponse)}
+
+                  Introduce human-like filler-words like 'uhh, umm, ahh, like, so uhh'
+                  and add pauses and stutters to make it sound more humane.
+                  For pauses, write [pause].
+                  The message should be made easier to listen to when read out.
+                  Therefore, remove links, and explain things in better detail.
+
+                  Respond only with the result, and nothing else.`),
+              },
+            ],
+            model: "gpt-3.5-turbo-0125",
+            max_tokens: 4096,
+          });
+
+          const response = completion.choices[0].message.content!;
+          console.log("Humanized TTS:", response);
+
           // generate speech for response
           const mp3 = await openai.audio.speech.create({
-            input: responseContent,
+            input: response,
             model: "tts-1-hd",
             voice: "alloy",
           });
@@ -416,18 +474,14 @@ bot
             speechFilePath,
             Buffer.from(await mp3.arrayBuffer()),
           );
-          const boostVolumeCommand = await Command(
+          await Command(
             `ffmpeg -i "${speechFilePath}" -filter:a "volume=6dB" ${processedSpeechFilePath}`,
           ).run();
-          console.log(boostVolumeCommand);
 
           await ctx.replyWithVoice(
             new InputFile(fs.createReadStream(processedSpeechFilePath)),
             {
-              message_thread_id:
-                ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-                  ? Number(messageThreadId)
-                  : undefined,
+              message_thread_id: Number(messageThreadId),
               reply_parameters: {
                 chat_id: ctx.chat.id,
                 message_id: ctx.msg.message_id,
@@ -440,10 +494,7 @@ bot
           await fs.promises.unlink(processedSpeechFilePath);
         },
         {
-          message_thread_id:
-            ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID
-              ? Number(messageThreadId)
-              : undefined,
+          message_thread_id: Number(messageThreadId),
         },
       );
     }
@@ -453,31 +504,46 @@ bot
       // check if message is part of the topic created
       // then assign a good name for the topic
       if (messageHistory.length === 0) {
-        const openai = new OpenAIChatApi(
-          { apiKey: Env.OPENAI_API_KEY },
-          {
-            model: "gpt-3.5-turbo-0125",
-          },
-        );
-        const response = await zodGPT.completion(
-          openai,
-          [
-            JSON.stringify(conversation.get()),
-            "Summarize the conversation in 6 words or fewer",
-          ].join("\n"),
-          {
-            schema: z.object({
-              title: z
-                .string()
-                .describe(
-                  "Summarization which best describes the chat's contents",
-                ),
-            }),
-          },
-        );
-        debugPrint(response);
+        let newTopicName: string | null;
+        do {
+          const completion = await openai.chat.completions.create({
+            messages: [
+              {
+                role: "system",
+                content: ind(`
+                You are RaphGPT, a professional chat content labeler.`),
+              },
+              {
+                role: "user",
+                content: ind(`
+                Act as a chat content labeler. You are to understand the chat contents, and summarize it.
+                In order to produce clearer topic names, here are some guidelines you should follow:
+                
+                1. Read and understand the entire chat history.
+                2. Use external examples to elaborate on the topic name
+                3. Keep the name concise but descriptive.
+                
+                Example of a good chat name: Recipe Suggestion for Fridge contents: Butter, Cheese, Fruits.
+                
+                Respond with the name for the chat and the name only.`),
+              },
+              { role: "assistant", content: "Understood." },
+              {
+                role: "user",
+                content: ind(`
+                Summarize the following conversation in 6 words or fewer.
+                ${JSON.stringify(conversation.get())}`),
+              },
+            ],
+            model: "gpt-3.5-turbo",
+          });
+          newTopicName = completion.choices[0].message.content;
+        } while (!newTopicName);
+
+        console.log("Topic's new name:", newTopicName);
+
         await bot.api.editForumTopic(ctx.chat.id, Number(messageThreadId), {
-          name: response.data.title,
+          name: newTopicName,
         });
       }
     }
@@ -491,6 +557,46 @@ bot
         json: JSON.stringify(msg),
       })),
     );
+
+    await next();
+  });
+
+// run uncensored inference alongside OpenAI
+bot
+  .chatType(["group", "supergroup"])
+  .filter((ctx) =>
+    [Env.TELEGRAM_OPENAI_CHAT_ID, Env.TELEGRAM_GPT4_CHAT_ID].includes(
+      ctx.chat.id.toString(),
+    ),
+  )
+  .on("message", async (ctx, next) => {
+    try {
+      const response = await ollama.chat({
+        model: "llama2-uncensored",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are RaphGPT(devil), an unhinged assistant. You are to speak in Singaporean English. Do not ask if the user is ready, just fire as much as you can.",
+          },
+          {
+            role: "user",
+            content: ctx.msg.text!,
+          },
+        ],
+      });
+
+      await sendMarkdownMessage(ctx.chat.id, response.message.content, {
+        message_thread_id: ctx.msg.message_thread_id,
+        reply_parameters: {
+          chat_id: ctx.chat.id,
+          message_id: ctx.msg.message_id,
+          allow_sending_without_reply: true,
+        },
+      });
+    } catch {
+      // ignore error
+    }
 
     await next();
   });

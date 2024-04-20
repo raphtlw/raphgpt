@@ -1,12 +1,14 @@
 import { code, fmt, underline } from "@grammyjs/parse-mode";
-import { ContextType, functions } from "ai/functions";
+import { ind } from "@raphtlw/indoc";
+import { HyperStore } from "ai/hyper";
+import assert from "assert";
 import fs from "fs";
 import { Api } from "grammy";
 import OpenAI from "openai";
 import { Env } from "secrets/env";
 import { inspect } from "util";
 
-const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
+export const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 
 export class DraftMessage {
   constructor(
@@ -33,30 +35,9 @@ export class DraftMessage {
   }
 }
 
-export type Message = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+export type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
-export const message = (inner: Message) => ({
-  getCombinedContent() {
-    if (typeof inner.content === "string") {
-      return inner.content;
-    } else if (Array.isArray(inner.content)) {
-      const content: string[] = [];
-      for (const part of inner.content) {
-        if (part.type === "text") {
-          content.push(part.text);
-        }
-        if (part.type === "image_url") {
-          content.push(`image_url: ${part.image_url.url}`);
-        }
-      }
-      return content.join(String.fromCharCode(32));
-    } else {
-      return null;
-    }
-  },
-});
-
-export const combineMessageContent = (message: Message) => {
+export const combineMessageContent = (message: MessageParam) => {
   if (typeof message.content === "string") {
     return message.content;
   } else if (Array.isArray(message.content)) {
@@ -76,7 +57,7 @@ export const combineMessageContent = (message: Message) => {
 };
 
 export class Conversation {
-  constructor(private messages: Message[] = []) {}
+  constructor(private messages: MessageParam[] = []) {}
 
   validate() {
     for (let i = 1; i < this.messages.length; i++) {
@@ -92,26 +73,41 @@ export class Conversation {
     return true;
   }
 
-  add(message: Message) {
+  /**
+   * Append a prompt to the end of the context
+   */
+  add(message: MessageParam) {
     this.messages.push(message);
   }
 
-  addSystem(...prompt: string[]) {
-    for (let i = 0; i < this.messages.length; i++) {
-      if (this.messages[i].role === "system") {
-        this.messages.splice(i + 1, 0, {
-          role: "system",
-          content: prompt.join("\n"),
-        });
-      }
+  /**
+   * Insert a prompt to the beginning of a section of
+   * messages with the same role.
+   */
+  insert(message: MessageParam) {
+    const messageRoleIdx = this.messages.findIndex(
+      (msg) => msg.role === message.role,
+    );
+    if (messageRoleIdx >= 0) {
+      this.messages.splice(messageRoleIdx, 0, message);
+    } else {
+      this.messages.unshift(message);
     }
   }
 
-  addUserInstructions(...prompt: string[]) {
-    this.messages.push({
-      role: "user",
-      content: prompt.join("\n"),
-    });
+  /**
+   * Append a prompt to the end of a section of
+   * messages with the same role
+   */
+  append(message: MessageParam) {
+    const messageRoleIdx = this.messages.findLastIndex(
+      (msg) => msg.role === message.role,
+    );
+    if (messageRoleIdx >= 0) {
+      this.messages.splice(messageRoleIdx + 1, 0, message);
+    } else {
+      this.messages.unshift(message);
+    }
   }
 
   peek() {
@@ -131,18 +127,66 @@ export class Conversation {
   }
 }
 
-export const runModel = async (
+export const runModel = async <Context>(
   history: Conversation,
   current: Conversation,
-  context: ContextType,
+  context: Context,
+  functions: HyperStore<Context>,
+  model: OpenAI.Chat.Completions.ChatCompletionCreateParams["model"] = "gpt-3.5-turbo-0125",
 ) => {
-  const prompt = current.peek();
-  const promptContent = message(prompt).getCombinedContent();
+  const prompt = current.pop();
+  assert(prompt, "No new messages added to current conversation context");
+
+  if (prompt.role === "user") {
+    let improvedDraftPrompt: string | null;
+    do {
+      const completion = await openai.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+            content: ind(
+              `You are RaphGPT, a professional and experienced prompt engineer.`,
+            ),
+          },
+          ...history.get(),
+          {
+            role: "user",
+            content: ind(`
+            Act as a professional and experienced prompt engineer for RaphGPT. The prompt engineer should strive to expand on as many unknown details of the prompt as much as possible, to give RaphGPT a better idea of what the user might additionally need. The prompt should be as detailed and comprehensive as possible, to ensure brevity and clarity for RaphGPT to understand.
+
+            Do not ask the user any question, just respond with the prompt and the prompt only.
+
+            Example of a good prompt created by a prompt engineer:
+            "The wishes to scan a receipt and produce a detailed copy of the receipt to be used for bill splitting purposes. When splitting the bill, you should use the functions provided to perform arithmetic operations to ensure the reliability of your calculations. You should also provide elaborate details on the calculations you made and reasoning behind them. In addition, please list the arithmetic operations beside the results of the arithmetic operation."`),
+          },
+          { role: "assistant", content: "Understood." },
+          {
+            role: "user",
+            content:
+              ind(`Expand on the following prompt: ${combineMessageContent(prompt)}
+          `),
+          },
+        ],
+        model: "gpt-3.5-turbo",
+      });
+      improvedDraftPrompt = completion.choices[0].message.content;
+    } while (!improvedDraftPrompt);
+    console.log("Improved prompt:", improvedDraftPrompt);
+    current.add({
+      role: "user",
+      content: [
+        { type: "text", text: improvedDraftPrompt },
+        { type: "text", text: combineMessageContent(prompt)! },
+      ],
+    });
+  } else {
+    current.add(prompt);
+  }
 
   const completion = await openai.chat.completions.create({
     max_tokens: 4096,
     messages: [...history.get(), ...current.get()],
-    model: "gpt-3.5-turbo-0125",
+    model,
     tool_choice: "auto",
     tools: functions.asTools(),
   });
@@ -192,45 +236,9 @@ export const runModel = async (
           `\nResult ${inspect(response, true, 10, true)}`,
         );
 
-        if (response) {
-          if (typeof response === "string") {
-            content = response;
-          } else {
-            // if response is JSON-encoded, simplify it (to cut down token usage)
-            // summarize function response data
-            const completion = await openai.chat.completions.create({
-              messages: [
-                {
-                  role: "system",
-                  content:
-                    "You are a JSON simplifier for GPT function calls, retain the most information as much as possible.",
-                },
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: `Original question: ${promptContent}`,
-                    },
-                    {
-                      type: "text",
-                      text: "Simplify the JSON object below to better answer the original question",
-                    },
-                    {
-                      type: "text",
-                      text: JSON.stringify(response),
-                    },
-                  ],
-                },
-              ],
-              model: "gpt-3.5-turbo-0125",
-              response_format: { type: "json_object" },
-            });
-            content = completion.choices[0].message.content!;
-          }
-        }
+        content = JSON.stringify(response);
       } catch (e) {
-        console.error(e);
+        console.error("Error from function call", toolCall, e);
         content = JSON.stringify(e);
       }
 
@@ -242,7 +250,7 @@ export const runModel = async (
     }
   }
 
-  return [chosen.message, current.peek()] as const;
+  return [chosen.message, chosen.message.tool_calls !== undefined] as const;
 };
 
 export const transcribeAudio = async (filePath: string) => {
@@ -291,7 +299,7 @@ export const describeVideo = async (
         role: "user",
       },
     ],
-    model: "gpt-4-vision-preview",
+    model: "gpt-4-turbo",
   });
   console.log("Completion:", inspect(completion.choices, true, 10, true));
 

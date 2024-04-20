@@ -19,7 +19,9 @@
     "@paulmillr/qr": "^0.1.1",
     "@raphtlw/indoc": "^0.1.6",
     "@zodios/core": "^10.9.6",
+    "axios": "^1.6.8",
     "bree": "^9.2.2",
+    "cheerio": "1.0.0-rc.12",
     "date-fns": "^3.6.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.30.1",
@@ -33,7 +35,7 @@
     "mathjs": "^12.4.1",
     "mime": "^4.0.1",
     "ollama": "^0.5.0",
-    "openai": "^4.29.0",
+    "openai": "^4.36.0",
     "puppeteer": "^22.6.4",
     "sharp": "^0.33.3",
     "texsvg": "^2.1.0",
@@ -41,7 +43,6 @@
     "tsx": "^4.7.1",
     "typescript": "^5.4.2",
     "zod": "^3.22.4",
-    "zod-gpt": "^0.15.1",
     "zod-to-json-schema": "^3.22.5"
   },
   "devDependencies": {

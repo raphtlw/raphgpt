@@ -3,6 +3,7 @@ import { z } from "zod";
 import "dotenv/config";
 
 export const envSchema = z.object({
+  AUDD_API_TOKEN: z.string(),
   COINGECKO_API_KEY: z.string(),
   DATABASE_URL: z.string(),
   GOOGLE_AI_API_KEY: z.string(),
@@ -16,6 +17,7 @@ export const envSchema = z.object({
   OPENROUTER_API_KEY: z.string(),
   OPENWEATHER_API_KEY: z.string(),
   REPLICATE_API_TOKEN: z.string(),
+  SPOONTACULAR_API_KEY: z.string(),
   TELEGRAM_API_KEY: z.string(),
   TELEGRAM_BOT_TESTING_CHAT_ID: z.string(),
   TELEGRAM_BOT_UPDATES_CHAT_ID: z.string(),

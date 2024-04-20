@@ -72,6 +72,7 @@ export const hyperStore = <Context>(
     );
   },
 });
+export type HyperStore<Context> = ReturnType<typeof hyperStore<Context>>;
 
 /**
  * Define new HyperFunction
