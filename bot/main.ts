@@ -34,7 +34,6 @@ import fs from "fs";
 import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
 import { Message } from "grammy/types";
 import ollama from "ollama";
-import OpenAI from "openai";
 import path from "path";
 import { Env } from "secrets/env";
 import { inspect } from "util";
@@ -350,10 +349,13 @@ bot
       As Telegram has modalities other than text, it is important, to process other
       types of messages, in order to give users the best experience.
 
-      User might send the following kinds of media content:
-      - Image/photo, specified as [image]: <image_url>
-      - Audio, specified as [audio]: <audio_url>
-      - Video, specified as [video]: <video_url>
+      User might send the following kinds of media content in the following format:
+      - Image/photo, as [image]: <url>
+      - Audio, as [audio]: <url>
+      - Video, as [video]: <url>
+
+      The path to the media content is specified in angled brackets.
+      Example: ABC.mp4
 
       The tools/functions you have available are to be used to process the media.
       You should call multiple tools/functions in parallel.
@@ -428,35 +430,46 @@ bot
         ctx.chat,
         "record_voice",
         async () => {
-          const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
-
-          const completion = await openai.chat.completions.create({
-            messages: [
-              {
-                role: "user",
-                content: ind(`
-                  The following is a model's message, to be fed into Whisper:
-                  ${combineMessageContent(modelResponse)}
-
-                  Introduce human-like filler-words like 'uhh, umm, ahh, like, so uhh'
-                  and add pauses and stutters to make it sound more humane.
+          let toSay: string | null;
+          do {
+            const completion = await openai.chat.completions.create({
+              messages: [
+                {
+                  role: "system",
+                  content: `You are RaphGPT, a friendly and helpful chatbot.`,
+                },
+                {
+                  role: "user",
+                  content: ind(`
+                  Act as a human, with a Singaporean accent.
+                  You are to rewrite robotic outputs in a more humanized way for the human
+                  overlords to have a better hearing experience. To understand the words carefully,
+                  they need filler words like 'uhh', 'umm', 'ahh', 'like' and 'so uhh'.
+                  Introduce pauses and stutters to make sentences sound more humane.
                   For pauses, write [pause].
-                  The message should be made easier to listen to when read out.
+                  The output should be made easier to listen to when read out.
                   Therefore, remove links, and explain things in better detail.
 
-                  Respond only with the result, and nothing else.`),
-              },
-            ],
-            model: "gpt-3.5-turbo-0125",
-            max_tokens: 4096,
-          });
-
-          const response = completion.choices[0].message.content!;
-          console.log("Humanized TTS:", response);
+                  Do not ask the user any question, just respond with the output and the output only.`),
+                },
+                { role: "assistant", content: "Understood." },
+                {
+                  role: "user",
+                  content: ind(
+                    `Rewrite this: ${combineMessageContent(modelResponse)}`,
+                  ),
+                },
+              ],
+              model: "gpt-3.5-turbo-0125",
+              max_tokens: 4096,
+            });
+            toSay = completion.choices[0].message.content;
+          } while (!toSay);
+          console.log("Humanized TTS:", toSay);
 
           // generate speech for response
           const mp3 = await openai.audio.speech.create({
-            input: response,
+            input: toSay,
             model: "tts-1-hd",
             voice: "alloy",
           });
@@ -518,13 +531,13 @@ bot
                 content: ind(`
                 Act as a chat content labeler. You are to understand the chat contents, and summarize it.
                 In order to produce clearer topic names, here are some guidelines you should follow:
-                
+
                 1. Read and understand the entire chat history.
                 2. Use external examples to elaborate on the topic name
                 3. Keep the name concise but descriptive.
-                
+
                 Example of a good chat name: Recipe Suggestion for Fridge contents: Butter, Cheese, Fruits.
-                
+
                 Respond with the name for the chat and the name only.`),
               },
               { role: "assistant", content: "Understood." },
