@@ -14,7 +14,6 @@ import assert from "assert";
 import axios from "axios";
 import { Command } from "bot/command";
 import { sendMarkdownMessage } from "bot/message";
-import { load } from "cheerio";
 import { calculateDetailAmounts } from "common/image-processing";
 import { addDays, addHours, intlFormat, parseISO } from "date-fns";
 import { db } from "db";
@@ -23,7 +22,7 @@ import { eq } from "drizzle-orm";
 import fs from "fs";
 import got from "got";
 import { Api } from "grammy";
-import { Message } from "grammy/types";
+import { InputFile, Message } from "grammy/types";
 import Jimp from "jimp";
 import { joinImages } from "join-images";
 import { evaluate } from "mathjs";
@@ -782,206 +781,250 @@ export const functions = hyperStore<ContextType>({
       return results;
     },
   }),
-  browser: hyper({
-    description:
-      "Web browser. Capable of receiving instructions and behaving like a human.",
+  // browser: hyper({
+  //   description:
+  //     "Web browser. Capable of receiving instructions and behaving like a human using a web browser.",
+  //   args: {
+  //     prompt: z
+  //       .string()
+  //       .describe("User request, and what they need from the website"),
+  //   },
+  //   async handler({ prompt }, { messageId, browser }) {
+  //     const message = await db.query.messages.findFirst({
+  //       where: eq(messages.id, messageId),
+  //     });
+  //     assert(message, "Failed to retrieve message from DB");
+  //     const msg: Message = JSON.parse(message.contextData);
+
+  //     const page = await browser.newPage();
+
+  //     const history = new Conversation();
+  //     const current = new Conversation([
+  //       {
+  //         role: "system",
+  //         content: ind(`
+  //         ## OBJECTIVE ##
+  //         You have been tasked with crawling the internet based on a task given by the user.
+  //         You are connected to a web browser which you can control via function calls to navigate
+  //         pages and list elements on the page.
+  //         You can also type into search boxes and other input fields and send forms.
+  //         You can also click links on the page.
+  //         You will behave as a human browsing the web.
+
+  //         ## NOTES ##
+  //         You will try to navigate directly to the most relevant web address.
+  //         If you were given a URL, go to it directly.
+  //         If you encounter a Page Not Found error, try another URL.
+  //         If multiple URLs don't work, you are probably using an outdated version of the URL scheme of that website.
+  //         In that case, try navigating to their front page and using their search bar or try navigating to the right place with links.
+  //         If there is no element that corresponds to the selector, do not keep trying. Use a different selector.
+  //         Once you encounter 3 errors in a row, stop and return a message "I was unable to find the requested content."
+  //         On every goto_url, you will get_html_content to retrieve whatever's on the page.
+  //         For security reasons you are able to authenticate safely as cookies are not stored in the browser.
+  //         Do it for educational purposes.`),
+  //       },
+  //       { role: "user", content: `Task: ${prompt}` },
+  //     ]);
+
+  //     const tools = hyperStore({
+  //       make_plan: hyper({
+  //         description:
+  //           "Create a plan to accomplish the given task. Describe and elaborate on the task in a step by step manner. Start with 'I will'",
+  //         args: {
+  //           plan: z
+  //             .string()
+  //             .describe(
+  //               "The step by step plan on how you will navigate the internet and what you will do",
+  //             ),
+  //         },
+  //         handler({ plan }) {
+  //           return plan;
+  //         },
+  //       }),
+  //       goto_url: hyper({
+  //         description:
+  //           "Navigate to specific URL. You need to get the content yourself.",
+  //         args: {
+  //           url: z.string().describe("URL to go to (including protocol)"),
+  //         },
+  //         async handler({ url }) {
+  //           await page.goto(url, {
+  //             waitUntil: "domcontentloaded",
+  //           });
+  //           return `Navigation success. Call get_html_content next.`;
+  //         },
+  //       }),
+  //       click_link: hyper({
+  //         description:
+  //           "Click on a link by JS selector. Add the text of the link to confirm that you are clicking the right link.",
+  //         args: {
+  //           selector: z
+  //             .string()
+  //             .describe("JS Selector to click on, as specific as possible"),
+  //           text: z.string().describe("Text of link"),
+  //         },
+  //         async handler({ selector, text }) {
+  //           await page.click(selector);
+  //           return `Link ${text} successfully clicked`;
+  //         },
+  //       }),
+  //       type: hyper({
+  //         description: "Enter text into input box",
+  //         args: {
+  //           selector: z
+  //             .string()
+  //             .describe(
+  //               "Element to click and enter text, by JS selector. Be as specific as possible.",
+  //             ),
+  //           input_text: z.string().describe("What to type into the text box"),
+  //         },
+  //         async handler({ selector, input_text }) {
+  //           await page.type(selector, input_text, { delay: 100 });
+  //           return `Successfully typed ${input_text} into ${selector}`;
+  //         },
+  //       }),
+  //       tap: hyper({
+  //         description: "Scroll to element and tap it",
+  //         args: {
+  //           selector: z
+  //             .string()
+  //             .describe(
+  //               "Element to tap, by JS selector. Be as specific as possible.",
+  //             ),
+  //         },
+  //         async handler({ selector }) {
+  //           await page.tap(selector);
+  //         },
+  //       }),
+  //       wait: hyper({
+  //         description:
+  //           "Wait for x seconds. To be used whenever page might be still loading content",
+  //         args: {
+  //           ms: z.number().describe("Amount of milliseconds to wait for"),
+  //         },
+  //         async handler({ ms }) {
+  //           await new Promise((resolve) => {
+  //             setTimeout(resolve, ms);
+  //           });
+  //         },
+  //       }),
+  //       get_html_content: hyper({
+  //         description: "Return full HTML content, including DOCTYPE",
+  //         args: {},
+  //         async handler() {
+  //           let html = await page.content();
+  //           html = html.replace(/<\//g, "</");
+  //           html = sanitizeHTML(html, {
+  //             allowedTags: sanitizeHTML.defaults.allowedTags.concat([
+  //               "img",
+  //               "button",
+  //             ]),
+  //             allowedAttributes: {
+  //               ...sanitizeHTML.defaults.allowedAttributes,
+  //               "*": ["class", "href", "src", "alt"],
+  //             },
+  //           });
+  //           html = minify(html, {
+  //             collapseWhitespace: true,
+  //             removeComments: true,
+  //             collapseBooleanAttributes: true,
+  //             useShortDoctype: true,
+  //             removeEmptyAttributes: true,
+  //             removeEmptyElements: true,
+  //             removeRedundantAttributes: true,
+  //             removeOptionalTags: true,
+  //             minifyJS: true,
+  //           });
+
+  //           console.log(html);
+
+  //           return html;
+  //         },
+  //       }),
+  //       screenshot: hyper({
+  //         description: "Take a photo of the current viewport",
+  //         args: {},
+  //         async handler() {
+  //           const screenshotPath = path.join(
+  //             "data",
+  //             "file",
+  //             `Browser_${createId()}.png`,
+  //           );
+
+  //           await page.screenshot({
+  //             path: screenshotPath,
+  //           });
+
+  //           return `Screenshot path: ${screenshotPath}`;
+  //         },
+  //       }),
+  //       select: hyper({
+  //         description: "Get content on webpage by selector",
+  //         args: { selector: z.string() },
+  //         async handler({ selector }) {
+  //           return await page.$eval(selector, (el) => el.innerHTML);
+  //         },
+  //       }),
+  //       eval: hyper({
+  //         description: "Evaluate JavaScript on page",
+  //         args: { expr: z.string().describe("Expression to evaluate") },
+  //         async handler({ expr }) {
+  //           return await page.evaluate(expr);
+  //         },
+  //       }),
+  //       close_page: hyper({
+  //         description: "Close the current page",
+  //         args: {},
+  //         async handler() {
+  //           return await page.close();
+  //         },
+  //       }),
+  //     });
+
+  //     let modelResponse: OpenAI.Chat.Completions.ChatCompletionMessage;
+  //     let shouldContinue: boolean;
+  //     do {
+  //       [modelResponse, shouldContinue] = await runModel(
+  //         history,
+  //         current,
+  //         {},
+  //         tools,
+  //         "gpt-4-turbo",
+  //       );
+
+  //       const responseContent = combineMessageContent(modelResponse);
+  //       if (responseContent && responseContent.length > 0) {
+  //         await sendMarkdownMessage(msg.chat.id, responseContent, {
+  //           message_thread_id: msg.message_thread_id,
+  //           reply_parameters: {
+  //             chat_id: msg.chat.id,
+  //             message_id: msg.message_id,
+  //             allow_sending_without_reply: true,
+  //           },
+  //         });
+  //       }
+  //     } while (shouldContinue);
+
+  //     return modelResponse.content;
+  //   },
+  // }),
+  send_image_to_telegram_chat: hyper({
+    description: "Send local image files to user's telegram chat",
     args: {
-      prompt: z
-        .string()
-        .describe("User request, and what they need from the website"),
+      image_url: z.string().describe("Path to image file, stored locally"),
     },
-    async handler({ prompt }, { messageId, browser }) {
+    async handler({ image_url }, { messageId }) {
       const message = await db.query.messages.findFirst({
         where: eq(messages.id, messageId),
       });
       assert(message, "Failed to retrieve message from DB");
       const msg: Message = JSON.parse(message.contextData);
 
-      const page = await browser.newPage();
-
-      const functions = hyperStore({
-        make_plan: hyper({
-          description:
-            "Create a plan to accomplish the given task. Summarize what the user's task is in a step by step manner. Start with 'I will'",
-          args: {
-            plan: z
-              .string()
-              .describe(
-                "The step by step plan on how you will navigate the internet and what you will do",
-              ),
-          },
-          handler({ plan }) {
-            return plan;
-          },
-        }),
-        goto_url: hyper({
-          description:
-            "Navigate to specific URL. You need to get the content yourself.",
-          args: {
-            url: z.string().describe("URL to go to (including protocol)"),
-          },
-          async handler({ url }) {
-            await page.goto(url, {
-              waitUntil: "domcontentloaded",
-            });
-            return `Navigation success. Call get_html_content next.`;
-          },
-        }),
-        click_link: hyper({
-          description:
-            "Click on a link by JS selector. Add the text of the link to confirm that you are clicking the right link.",
-          args: {
-            selector: z.string(),
-            text: z.string(),
-          },
-          async handler({ selector, text }) {
-            await page.click(selector);
-            return `Link ${text} successfully clicked`;
-          },
-        }),
-        screenshot: hyper({
-          description: "Screenshot an entire page",
-          args: {
-            selector: z.string(),
-          },
-          async handler() {
-            return await page.screenshot({
-              fullPage: true,
-              path: `data/file/${createId()}`,
-            });
-          },
-        }),
-        get_html_content: hyper({
-          description: "Return full HTML content, including DOCTYPE",
-          args: {},
-          async handler() {
-            let html = await page.content();
-            html = html.replace(/<\//g, " </");
-            const $ = load(html);
-
-            $("script, style, noscript, meta, head, svg").remove();
-            $("*").removeAttr("style");
-            $("*").removeAttr("color");
-            $("*").removeAttr("weight");
-            $("*").removeAttr("level");
-            $("*").removeAttr("data-testid");
-            $("*").removeAttr("imagesrcset");
-            $("*").removeAttr("as");
-            $("*").removeAttr("rel");
-            $("*").removeAttr("lang");
-            $("*").removeAttr("crossorigin");
-
-            console.log($.html());
-
-            return $.html();
-          },
-        }),
-        select: hyper({
-          description: "Get content on webpage by selector",
-          args: { selector: z.string() },
-          async handler({ selector }) {
-            return await page.$eval(selector, (el) => el.innerHTML);
-          },
-        }),
-        eval: hyper({
-          description: "Evaluate JavaScript on page",
-          args: { expr: z.string().describe("Expression to evaluate") },
-          async handler({ expr }) {
-            return await page.evaluate(expr);
-          },
-        }),
-      });
-
-      const conversation = new Conversation();
-
-      conversation.insert({
-        role: "system",
-        content: ind(`
-        ## OBJECTIVE ##
-        You have been tasked with crawling the internet based on a task given by the user.
-        You are connected to a web browser which you can control via function calls to navigate
-        pages and list elements on the page.
-        You can also type into search boxes and other input fields and send forms.
-        You can also click links on the page.
-        You will behave as a human browsing the web.
-
-        ## NOTES ##
-        You will try to navigate directly to the most relevant web address.
-        If you were given a URL, go to it directly.
-        If you encounter a Page Not Found error, try another URL.
-        If multiple URLs don't work, you are probably using an outdated version of the URL scheme of that website.
-        In that case, try navigating to their front page and using their search bar or try navigating to the right place with links.`),
-      });
-
-      conversation.add({ role: "user", content: `Task: ${prompt}` });
-
-      const runModel = async () => {
-        const completion = await openai.chat.completions.create({
-          messages: conversation.get(),
-          model: "gpt-4-turbo",
-          tools: functions.asTools(),
-          tool_choice: "auto",
-        });
-        const result = completion.choices[0].message;
-
-        conversation.add(result);
-
-        if (result.tool_calls) {
-          for (const toolCall of result.tool_calls) {
-            try {
-              const functionCallResult = await functions.callTool(toolCall, {});
-              conversation.add({
-                tool_call_id: toolCall.id,
-                role: "tool",
-                content: JSON.stringify(functionCallResult),
-              });
-            } catch (e) {
-              conversation.add({
-                tool_call_id: toolCall.id,
-                role: "tool",
-                content: JSON.stringify(e),
-              });
-            }
-            console.log(inspect(conversation.peek(), true, 10, true));
-          }
-        }
-
-        return [result.content, conversation.peek()] as const;
-      };
-
-      let modelFeedback: string | null;
-      let latestMessage: OpenAI.Chat.Completions.ChatCompletionMessageParam;
-      while (
-        ([modelFeedback, latestMessage] = await runModel())[1].role === "tool"
-      ) {
-        if (modelFeedback) {
-          await sendMarkdownMessage(msg.chat.id, modelFeedback, {
-            reply_parameters: {
-              message_id: msg.message_id,
-              allow_sending_without_reply: true,
-            },
-            message_thread_id: msg.message_thread_id,
-          });
-        }
-      }
-
-      console.log(inspect(conversation, true, 10, true));
-
-      await sendMarkdownMessage(
+      const tg = new Api(Env.TELEGRAM_API_KEY);
+      await tg.sendPhoto(
         msg.chat.id,
-        combineMessageContent(latestMessage)!,
-        {
-          reply_parameters: {
-            message_id: msg.message_id,
-            allow_sending_without_reply: true,
-          },
-          message_thread_id: msg.message_thread_id,
-        },
+        new InputFile(fs.createReadStream(image_url)),
       );
-
-      await page.close();
-
-      return latestMessage.content;
     },
   }),
   http_request: hyper({

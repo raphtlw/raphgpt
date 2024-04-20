@@ -1,7 +1,6 @@
 import { code, fmt, underline } from "@grammyjs/parse-mode";
 import { ind } from "@raphtlw/indoc";
 import { HyperStore } from "ai/hyper";
-import assert from "assert";
 import fs from "fs";
 import { Api } from "grammy";
 import OpenAI from "openai";
@@ -134,55 +133,6 @@ export const runModel = async <Context>(
   functions: HyperStore<Context>,
   model: OpenAI.Chat.Completions.ChatCompletionCreateParams["model"] = "gpt-3.5-turbo-0125",
 ) => {
-  const prompt = current.pop();
-  assert(prompt, "No new messages added to current conversation context");
-
-  if (prompt.role === "user") {
-    let improvedDraftPrompt: string | null;
-    do {
-      const completion = await openai.chat.completions.create({
-        messages: [
-          {
-            role: "system",
-            content: ind(
-              `You are RaphGPT, a professional and experienced prompt engineer.`,
-            ),
-          },
-          ...history.get(),
-          {
-            role: "user",
-            content: ind(`
-            Act as a professional and experienced prompt engineer for RaphGPT. The prompt engineer should strive to expand on as many unknown details of the prompt as much as possible, to give RaphGPT a better idea of what the user might additionally need. The prompt should be as detailed and comprehensive as possible, to ensure brevity and clarity for RaphGPT to understand.
-
-            Do not ask the user any question, just respond with the prompt and the prompt only.
-
-            Example of a good prompt created by a prompt engineer:
-            "The wishes to scan a receipt and produce a detailed copy of the receipt to be used for bill splitting purposes. When splitting the bill, you should use the functions provided to perform arithmetic operations to ensure the reliability of your calculations. You should also provide elaborate details on the calculations you made and reasoning behind them. In addition, please list the arithmetic operations beside the results of the arithmetic operation."`),
-          },
-          { role: "assistant", content: "Understood." },
-          {
-            role: "user",
-            content:
-              ind(`Expand on the following prompt: ${combineMessageContent(prompt)}
-          `),
-          },
-        ],
-        model: "gpt-3.5-turbo",
-      });
-      improvedDraftPrompt = completion.choices[0].message.content;
-    } while (!improvedDraftPrompt);
-    console.log("Improved prompt:", improvedDraftPrompt);
-    current.add({
-      role: "user",
-      content: [
-        { type: "text", text: improvedDraftPrompt },
-        { type: "text", text: combineMessageContent(prompt)! },
-      ],
-    });
-  } else {
-    current.add(prompt);
-  }
-
   const completion = await openai.chat.completions.create({
     max_tokens: 4096,
     messages: [...history.get(), ...current.get()],
@@ -251,6 +201,43 @@ export const runModel = async <Context>(
   }
 
   return [chosen.message, chosen.message.tool_calls !== undefined] as const;
+};
+
+export const improvePrompt = async (history: Conversation, prompt: string) => {
+  let improvedPrompt: string | null;
+  do {
+    const completion = await openai.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content: ind(
+            `You are RaphGPT, a professional and experienced prompt engineer.`,
+          ),
+        },
+        ...history.get(),
+        {
+          role: "user",
+          content: ind(`
+          Act as a professional and experienced prompt engineer for RaphGPT. The prompt engineer should strive to expand on as many unknown details of the prompt as much as possible, to give RaphGPT a better idea of what the user might additionally need. The prompt should be as detailed and comprehensive as possible, to ensure brevity and clarity for RaphGPT to understand.
+
+          Do not ask the user any question, just respond with the prompt and the prompt only.
+
+          Example of a good prompt created by a prompt engineer:
+          "The wishes to scan a receipt and produce a detailed copy of the receipt to be used for bill splitting purposes. When splitting the bill, you should use the functions provided to perform arithmetic operations to ensure the reliability of your calculations. You should also provide elaborate details on the calculations you made and reasoning behind them. In addition, please list the arithmetic operations beside the results of the arithmetic operation."`),
+        },
+        { role: "assistant", content: "Understood." },
+        {
+          role: "user",
+          content: ind(`Expand on the following prompt: ${prompt}
+        `),
+        },
+      ],
+      model: "gpt-3.5-turbo",
+    });
+    improvedPrompt = completion.choices[0].message.content;
+  } while (!improvedPrompt);
+
+  return improvedPrompt;
 };
 
 export const transcribeAudio = async (filePath: string) => {

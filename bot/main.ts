@@ -15,6 +15,7 @@ import {
   DraftMessage,
   MessageParam,
   combineMessageContent,
+  improvePrompt,
   openai,
   runModel,
   transcribeAudio,
@@ -358,14 +359,16 @@ bot
       Example: ABC.mp4
 
       The tools/functions you have available are to be used to process the media.
-      You should call multiple tools/functions in parallel.
       Their output is a natural language description provided by the GPT-4 vision
       model. Respond with the image details, and say that you have successfully
       stored the associated details.
 
       When math functions are invoked, list all the operations you made and the
       source of the expressions. This is to ensure the correctness of
-      your calculations.`),
+      your calculations.
+
+      Call each function sequentially as much as possible, until you get
+      the best results the user needs.`),
     });
 
     history.insert({
@@ -382,12 +385,25 @@ bot
     }
 
     const [draft, messageId] = await createDraftFromMsg(ctx.msg);
-    const conversation = new Conversation([draft.get()]);
+    const conversation = new Conversation();
 
     const modelResponse = await chatAction(
       ctx.chat,
       "typing",
       async () => {
+        const improvedPrompt = await improvePrompt(
+          history,
+          combineMessageContent(draft.get())!,
+        );
+        console.log("Improved prompt:", improvedPrompt);
+        conversation.add({
+          role: "user",
+          content: [
+            { type: "text", text: improvedPrompt },
+            { type: "text", text: combineMessageContent(draft.get())! },
+          ],
+        });
+
         let modelResponse: MessageParam;
         let shouldContinue: boolean;
         do {
