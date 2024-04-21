@@ -1,3 +1,4 @@
+import { ind } from "@raphtlw/indoc";
 import assert from "assert";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -57,10 +58,17 @@ export const hyperStore = <Context>(
     const hyperFunction = this.functions.get(data.function.name);
     assert(hyperFunction);
 
-    const args = hyperFunction._schema.parse(
+    const result = hyperFunction._schema.safeParse(
       JSON.parse(data.function.arguments),
     );
-    const response = hyperFunction._handler(args, context);
+    if (!result.success) {
+      throw new Error(
+        ind(`
+        There was an issue with parsing the function arguments,
+        please rewrite it by calling the ${data.function.name} function with the correct parameters.`),
+      );
+    }
+    const response = hyperFunction._handler(result.data, context);
 
     if (response instanceof Promise) return await response;
     return response;

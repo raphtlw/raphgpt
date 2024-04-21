@@ -5,6 +5,7 @@ import fs from "fs";
 import { Api } from "grammy";
 import OpenAI from "openai";
 import { Env } from "secrets/env";
+import { encoding_for_model } from "tiktoken";
 import { inspect } from "util";
 
 export const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
@@ -133,13 +134,25 @@ export const runModel = async <Context>(
   functions: HyperStore<Context>,
   model: OpenAI.Chat.Completions.ChatCompletionCreateParams["model"] = "gpt-3.5-turbo-0125",
 ) => {
-  const completion = await openai.chat.completions.create({
-    max_tokens: 4096,
-    messages: [...history.get(), ...current.get()],
-    model,
-    tool_choice: "auto",
-    tools: functions.asTools(),
-  });
+  let completion: OpenAI.Chat.Completions.ChatCompletion;
+
+  try {
+    completion = await openai.chat.completions.create({
+      max_tokens: 4096,
+      messages: [...history.get(), ...current.get()],
+      model,
+      tool_choice: "auto",
+      tools: functions.asTools(),
+    });
+  } catch (e) {
+    completion = await openai.chat.completions.create({
+      max_tokens: 4096,
+      messages: [...current.get()],
+      model,
+      tool_choice: "auto",
+      tools: functions.asTools(),
+    });
+  }
 
   const tg = new Api(Env.TELEGRAM_API_KEY);
   const botUpdatesCompletionNotification = fmt([
@@ -186,11 +199,34 @@ export const runModel = async <Context>(
           `\nResult ${inspect(response, true, 10, true)}`,
         );
 
-        content = JSON.stringify(response);
+        if (Array.isArray(response) && response.length === 0) {
+          content = "No response found.";
+        }
+
+        if (typeof response === "string") {
+          content = response;
+        } else {
+          content = JSON.stringify(response) ?? "No response found.";
+        }
       } catch (e) {
         console.error("Error from function call", toolCall, e);
-        content = JSON.stringify(e);
+        const error = JSON.parse(JSON.stringify(e));
+        content = error.message || error.msg || "Unknown error";
       }
+
+      // limit content length to fit context size for model
+      const encoder = encoding_for_model("gpt-3.5-turbo-0125");
+      const encoded = encoder.encode(
+        content.length > 0 ? content : "No response found.",
+      );
+      const truncatedToFitModelContextLength = encoded.slice(
+        Env.FUNCTION_CALL_TOKEN_THRESHOLD,
+      );
+      content = new TextDecoder().decode(
+        encoder.decode(truncatedToFitModelContextLength),
+      );
+      // free up memory
+      encoder.free();
 
       current.add({
         tool_call_id: toolCall.id,
@@ -217,13 +253,9 @@ export const improvePrompt = async (history: Conversation, prompt: string) => {
         ...history.get(),
         {
           role: "user",
-          content: ind(`
-          Act as a professional and experienced prompt engineer for RaphGPT. The prompt engineer should strive to expand on as many unknown details of the prompt as much as possible, to give RaphGPT a better idea of what the user might additionally need. The prompt should be as detailed and comprehensive as possible, to ensure brevity and clarity for RaphGPT to understand.
-
-          Do not ask the user any question, just respond with the prompt and the prompt only.
-
-          Example of a good prompt created by a prompt engineer:
-          "The wishes to scan a receipt and produce a detailed copy of the receipt to be used for bill splitting purposes. When splitting the bill, you should use the functions provided to perform arithmetic operations to ensure the reliability of your calculations. You should also provide elaborate details on the calculations you made and reasoning behind them. In addition, please list the arithmetic operations beside the results of the arithmetic operation."`),
+          content: ind(`Act as a professional and experienced prompt engineer.
+          You are to add more details and tags in order to make prompts easier
+          for the model to understand.`),
         },
         { role: "assistant", content: "Understood." },
         {
@@ -239,6 +271,43 @@ export const improvePrompt = async (history: Conversation, prompt: string) => {
 
   return improvedPrompt;
 };
+
+// export const improvePrompt = async (history: Conversation, prompt: string) => {
+//   let improvedPrompt: string | null;
+//   do {
+//     const completion = await openai.chat.completions.create({
+//       messages: [
+//         {
+//           role: "system",
+//           content: ind(
+//             `You are RaphGPT, a professional and experienced prompt engineer.`,
+//           ),
+//         },
+//         ...history.get(),
+//         {
+//           role: "user",
+//           content: ind(`
+//           Act as a professional and experienced prompt engineer for RaphGPT. The prompt engineer should strive to expand on as many unknown details of the prompt as much as possible, to give RaphGPT a better idea of what the user might additionally need. The prompt should be as detailed and comprehensive as possible, to ensure brevity and clarity for RaphGPT to understand.
+
+//           Do not ask the user any question, just respond with the prompt and the prompt only.
+
+//           Example of a good prompt created by a prompt engineer:
+//           "The wishes to scan a receipt and produce a detailed copy of the receipt to be used for bill splitting purposes. When splitting the bill, you should use the functions provided to perform arithmetic operations to ensure the reliability of your calculations. You should also provide elaborate details on the calculations you made and reasoning behind them. In addition, please list the arithmetic operations beside the results of the arithmetic operation."`),
+//         },
+//         { role: "assistant", content: "Understood." },
+//         {
+//           role: "user",
+//           content: ind(`Expand on the following prompt: ${prompt}
+//         `),
+//         },
+//       ],
+//       model: "gpt-3.5-turbo",
+//     });
+//     improvedPrompt = completion.choices[0].message.content;
+//   } while (!improvedPrompt);
+
+//   return improvedPrompt;
+// };
 
 export const transcribeAudio = async (filePath: string) => {
   const transcription = await openai.audio.transcriptions.create({

@@ -3,7 +3,7 @@ import puppeteer from "puppeteer";
 
 // launch browser
 export const BROWSER = await puppeteer.launch({
-  headless: false,
+  headless: true,
   defaultViewport: null,
   userDataDir: path.join(process.cwd(), "data", "browser"),
   args: ["--no-startup-window"],

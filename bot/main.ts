@@ -343,7 +343,8 @@ bot
       You are a friendly and helpful assistant named RaphGPT.
       You have eyes and can see. Whenever photo/image, you say vision.
       You can watch videos.
-      Telegram supports location sharing. Just ask the user to send it.
+
+      Telegram supports location sharing. If the user asks a question requiring their location, ask them to send their location first before doing anything.
 
       As a Large Language Model operating on Telegram, you have been given additional
       functions that help process media content.
@@ -368,7 +369,8 @@ bot
       your calculations.
 
       Call each function sequentially as much as possible, until you get
-      the best results the user needs.`),
+      the best results the user needs. When the model encounters a context
+      length problem, clear the context length using delete_older_function_calls.`),
     });
 
     history.insert({
@@ -419,16 +421,25 @@ bot
             "gpt-3.5-turbo-0125",
           );
 
-          const responseContent = combineMessageContent(modelResponse);
-          if (responseContent && responseContent.length > 0) {
-            await sendMarkdownMessage(ctx.chat.id, responseContent, {
-              message_thread_id: Number(messageThreadId),
-              reply_parameters: {
-                chat_id: ctx.chat.id,
-                message_id: ctx.msg.message_id,
-                allow_sending_without_reply: true,
-              },
+          try {
+            const responseContent = combineMessageContent(modelResponse);
+            if (responseContent && responseContent.length > 0) {
+              await sendMarkdownMessage(ctx.chat.id, responseContent, {
+                message_thread_id: Number(messageThreadId),
+                reply_parameters: {
+                  chat_id: ctx.chat.id,
+                  message_id: ctx.msg.message_id,
+                  allow_sending_without_reply: true,
+                },
+              });
+            }
+          } catch (e) {
+            const error = JSON.parse(JSON.stringify(e));
+            conversation.add({
+              role: "user",
+              content: `I encountered an error while sending the message. Could you try again? ${error.message}`,
             });
+            shouldContinue = true;
           }
         } while (shouldContinue);
 
