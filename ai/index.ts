@@ -199,12 +199,14 @@ export const runModel = async <Context>(
           `\nResult ${inspect(response, true, 10, true)}`,
         );
 
-        if (Array.isArray(response) && response.length === 0) {
-          content = "No response found.";
-        }
-
         if (typeof response === "string") {
           content = response;
+        } else if (Array.isArray(response)) {
+          if (response.length > 0) {
+            content = response.map((o) => `1. ${JSON.stringify(o)}`).join("\n");
+          } else {
+            content = "No response found.";
+          }
         } else {
           content = JSON.stringify(response) ?? "No response found.";
         }
@@ -216,22 +218,22 @@ export const runModel = async <Context>(
 
       // limit content length to fit context size for model
       const encoder = encoding_for_model("gpt-3.5-turbo-0125");
-      const encoded = encoder.encode(
-        content.length > 0 ? content : "No response found.",
-      );
+      const encoded = encoder.encode(content);
       const truncatedToFitModelContextLength = encoded.slice(
         Env.FUNCTION_CALL_TOKEN_THRESHOLD,
       );
-      content = new TextDecoder().decode(
+      const truncated = new TextDecoder().decode(
         encoder.decode(truncatedToFitModelContextLength),
       );
       // free up memory
       encoder.free();
 
+      console.log("Truncated:", truncated);
+
       current.add({
         tool_call_id: toolCall.id,
         role: "tool",
-        content,
+        content: truncated,
       });
     }
   }

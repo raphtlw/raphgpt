@@ -384,25 +384,31 @@ export const functions = hyperStore<ContextType>({
       });
       console.log("DALL-E Generation:", inspect(response, true, 10, true));
 
+      const responses: string[] = [];
+
       const tg = new Api(Env.TELEGRAM_API_KEY);
-      await tg.sendMediaGroup(
-        msg.chat.id,
-        response.data.map((img) => {
-          const imgcaption = fmt`💭 ${italic(img.revised_prompt ?? "Generated image")} ✨`;
+      await tg
+        .sendMediaGroup(
+          msg.chat.id,
+          response.data.map((img) => {
+            const imgcaption = fmt`💭 ${italic(img.revised_prompt ?? "Generated image")} ✨`;
 
-          return {
-            media: img.url!,
-            type: "photo",
-            caption: imgcaption.text,
-            caption_entities: imgcaption.entities,
-          };
-        }),
-        {
-          message_thread_id: msg.message_thread_id,
-        },
-      );
+            return {
+              media: img.url!,
+              type: "photo",
+              caption: imgcaption.text,
+              caption_entities: imgcaption.entities,
+            };
+          }),
+          {
+            message_thread_id: msg.message_thread_id,
+          },
+        )
+        .catch((e) => console.error(e));
 
-      return response;
+      responses.push(JSON.stringify(response));
+
+      return responses;
     },
   }),
   nutrition_analyzer: hyper({
