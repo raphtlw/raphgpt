@@ -220,6 +220,7 @@ export const runModel = async <Context>(
       const encoder = encoding_for_model("gpt-3.5-turbo-0125");
       const encoded = encoder.encode(content);
       const truncatedToFitModelContextLength = encoded.slice(
+        0,
         Env.FUNCTION_CALL_TOKEN_THRESHOLD,
       );
       const truncated = new TextDecoder().decode(
