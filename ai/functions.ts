@@ -26,7 +26,7 @@ import { and, eq } from "drizzle-orm";
 import fs from "fs";
 import got from "got";
 import { Api } from "grammy";
-import { InputFile, Message } from "grammy/types";
+import { Message } from "grammy/types";
 import { minify } from "html-minifier";
 import Jimp from "jimp";
 import { joinImages } from "join-images";
@@ -377,7 +377,7 @@ export const functions = hyperStore<ContextType>({
 
       const response = await openai.images.generate({
         model: "dall-e-3",
-        prompt: `I NEED to test how the tool works with extremely simple prompts. DO NOT add any detail, just use it AS-IS: ${prompt}`,
+        prompt,
         quality: quality,
         size: size,
         style: style,
@@ -401,7 +401,14 @@ export const functions = hyperStore<ContextType>({
             };
           }),
           {
-            message_thread_id: msg.message_thread_id,
+            message_thread_id:
+              msg.message_thread_id ??
+              msg.reply_to_message?.message_id ??
+              msg.message_id,
+            reply_parameters: {
+              message_id: msg.message_id,
+              allow_sending_without_reply: true,
+            },
           },
         )
         .catch((e) => console.error(e));
@@ -766,7 +773,10 @@ export const functions = hyperStore<ContextType>({
           let html = await page.content();
           html = html.replace(/<\//g, "</");
           html = sanitizeHTML(html, {
-            allowedTags: sanitizeHTML.defaults.allowedTags.concat(["img"]),
+            allowedTags: sanitizeHTML.defaults.allowedTags.concat([
+              "img",
+              "iframe",
+            ]),
           });
           html = minify(html, {
             caseSensitive: true,
@@ -781,7 +791,7 @@ export const functions = hyperStore<ContextType>({
             keepClosingSlash: true,
             minifyCSS: true,
             minifyJS: true,
-            minifyURLs: true,
+            minifyURLs: false,
             preserveLineBreaks: true,
             preventAttributesEscaping: true,
             processConditionalComments: true,
@@ -977,8 +987,7 @@ export const functions = hyperStore<ContextType>({
       const photoPath = `data/file/${photo_reference}.png`;
       response.data.pipe(fs.createWriteStream(photoPath));
 
-      return ind(`Saved path to photo: ${photoPath}
-      You can use send_image_to_telegram_chat to send the photo`);
+      return ind(`Saved path to photo: ${photoPath}`);
     },
   }),
   get_place_details: hyper({
@@ -1229,25 +1238,6 @@ export const functions = hyperStore<ContextType>({
   //     return modelResponse.content;
   //   },
   // }),
-  send_image_to_telegram_chat: hyper({
-    description: "Send local image files to user's telegram chat",
-    args: {
-      image_url: z.string().describe("Path to image file, stored locally"),
-    },
-    async handler({ image_url }, { messageId }) {
-      const message = await db.query.messages.findFirst({
-        where: eq(messages.id, messageId),
-      });
-      assert(message, "Failed to retrieve message from DB");
-      const msg: Message = JSON.parse(message.contextData);
-
-      const tg = new Api(Env.TELEGRAM_API_KEY);
-      await tg.sendPhoto(
-        msg.chat.id,
-        new InputFile(fs.createReadStream(image_url)),
-      );
-    },
-  }),
   http_request: hyper({
     description: "Run a HTTP request",
     args: {

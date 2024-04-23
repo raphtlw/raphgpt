@@ -15,7 +15,6 @@ import {
   DraftMessage,
   MessageParam,
   combineMessageContent,
-  improvePrompt,
   openai,
   runModel,
   transcribeAudio,
@@ -30,7 +29,7 @@ import { timestamp } from "bot/time";
 import { intlFormat } from "date-fns";
 import { db } from "db";
 import { guss, messages, openaiMessages } from "db/schema";
-import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import fs from "fs";
 import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
 import { Message } from "grammy/types";
@@ -305,26 +304,28 @@ bot
   )
   .on("message", async (ctx, next) => {
     // store thread ID here
-    let messageThreadId: string;
+    let messageThreadId = ctx.msg.message_thread_id?.toString();
 
     // if message has no thread, create one (in OpenAI chat)
-    if (ctx.msg.message_thread_id) {
-      messageThreadId = ctx.msg.message_thread_id.toString();
-    } else if (ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID) {
-      const newTopic = await ctx.createForumTopic("New chat");
-      messageThreadId = newTopic.message_thread_id.toString();
-      await ctx.forwardMessage(ctx.chat.id, {
-        message_thread_id: Number(messageThreadId),
-        disable_notification: true,
-      });
-    } else {
-      messageThreadId = ctx.msg.message_id.toString();
+    if (!messageThreadId) {
+      if (ctx.chat.id.toString() === Env.TELEGRAM_OPENAI_CHAT_ID) {
+        const newTopic = await ctx.createForumTopic("New chat");
+        messageThreadId = newTopic.message_thread_id.toString();
+        await ctx.forwardMessage(ctx.chat.id, {
+          message_thread_id: Number(messageThreadId),
+          disable_notification: true,
+        });
+      } else {
+        messageThreadId = ctx.msg.reply_to_message?.message_id.toString();
+      }
     }
 
     const messageHistory = await db.query.openaiMessages.findMany({
       where: and(
         eq(openaiMessages.telegramChatId, ctx.chat.id.toString()),
-        eq(openaiMessages.telegramThreadId, messageThreadId),
+        messageThreadId
+          ? eq(openaiMessages.telegramThreadId, messageThreadId)
+          : isNull(openaiMessages.telegramThreadId),
       ),
       orderBy: asc(openaiMessages.created),
     });
@@ -387,26 +388,13 @@ bot
     }
 
     const [draft, messageId] = await createDraftFromMsg(ctx.msg);
-    const conversation = new Conversation();
+
+    const conversation = new Conversation([draft.get()]);
 
     const modelResponse = await chatAction(
       ctx.chat,
       "typing",
       async () => {
-        const improvedPrompt = await improvePrompt(
-          history,
-          combineMessageContent(draft.get())!,
-        );
-        conversation.add({
-          role: "user",
-          content: [
-            { type: "text", text: improvedPrompt },
-            { type: "text", text: combineMessageContent(draft.get())! },
-          ],
-        });
-
-        console.log("Improved prompt:", improvedPrompt);
-
         let modelResponse: MessageParam;
         let shouldContinue: boolean;
         do {

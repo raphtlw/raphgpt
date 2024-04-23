@@ -1,5 +1,4 @@
 import { code, fmt, underline } from "@grammyjs/parse-mode";
-import { ind } from "@raphtlw/indoc";
 import { HyperStore } from "ai/hyper";
 import fs from "fs";
 import { Api } from "grammy";
@@ -134,25 +133,29 @@ export const runModel = async <Context>(
   functions: HyperStore<Context>,
   model: OpenAI.Chat.Completions.ChatCompletionCreateParams["model"] = "gpt-3.5-turbo-0125",
 ) => {
-  let completion: OpenAI.Chat.Completions.ChatCompletion;
+  let completion: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let tries = 0;
 
-  try {
-    completion = await openai.chat.completions.create({
-      max_tokens: 4096,
-      messages: [...history.get(), ...current.get()],
-      model,
-      tool_choice: "auto",
-      tools: functions.asTools(),
-    });
-  } catch (e) {
-    completion = await openai.chat.completions.create({
-      max_tokens: 4096,
-      messages: [...current.get()],
-      model,
-      tool_choice: "auto",
-      tools: functions.asTools(),
-    });
-  }
+  do {
+    completion = await openai.chat.completions
+      .create({
+        max_tokens: 4096,
+        messages: [...history.get(), ...current.get()],
+        model,
+        tool_choice: "auto",
+        tools: functions.asTools(),
+      })
+      .catch(() =>
+        openai.chat.completions.create({
+          max_tokens: 4096,
+          messages: [...current.get()],
+          model,
+          tool_choice: "auto",
+          tools: functions.asTools(),
+        }),
+      );
+    tries++;
+  } while (!completion && tries < 3);
 
   const tg = new Api(Env.TELEGRAM_API_KEY);
   const botUpdatesCompletionNotification = fmt([
@@ -241,76 +244,6 @@ export const runModel = async <Context>(
 
   return [chosen.message, chosen.message.tool_calls !== undefined] as const;
 };
-
-export const improvePrompt = async (history: Conversation, prompt: string) => {
-  let improvedPrompt: string | null;
-  do {
-    const completion = await openai.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: ind(
-            `You are RaphGPT, a professional and experienced prompt engineer.`,
-          ),
-        },
-        ...history.get(),
-        {
-          role: "user",
-          content: ind(`Act as a professional and experienced prompt engineer.
-          You are to add more details and tags in order to make prompts easier
-          for the model to understand.`),
-        },
-        { role: "assistant", content: "Understood." },
-        {
-          role: "user",
-          content: ind(`Expand on the following prompt: ${prompt}
-        `),
-        },
-      ],
-      model: "gpt-3.5-turbo",
-    });
-    improvedPrompt = completion.choices[0].message.content;
-  } while (!improvedPrompt);
-
-  return improvedPrompt;
-};
-
-// export const improvePrompt = async (history: Conversation, prompt: string) => {
-//   let improvedPrompt: string | null;
-//   do {
-//     const completion = await openai.chat.completions.create({
-//       messages: [
-//         {
-//           role: "system",
-//           content: ind(
-//             `You are RaphGPT, a professional and experienced prompt engineer.`,
-//           ),
-//         },
-//         ...history.get(),
-//         {
-//           role: "user",
-//           content: ind(`
-//           Act as a professional and experienced prompt engineer for RaphGPT. The prompt engineer should strive to expand on as many unknown details of the prompt as much as possible, to give RaphGPT a better idea of what the user might additionally need. The prompt should be as detailed and comprehensive as possible, to ensure brevity and clarity for RaphGPT to understand.
-
-//           Do not ask the user any question, just respond with the prompt and the prompt only.
-
-//           Example of a good prompt created by a prompt engineer:
-//           "The wishes to scan a receipt and produce a detailed copy of the receipt to be used for bill splitting purposes. When splitting the bill, you should use the functions provided to perform arithmetic operations to ensure the reliability of your calculations. You should also provide elaborate details on the calculations you made and reasoning behind them. In addition, please list the arithmetic operations beside the results of the arithmetic operation."`),
-//         },
-//         { role: "assistant", content: "Understood." },
-//         {
-//           role: "user",
-//           content: ind(`Expand on the following prompt: ${prompt}
-//         `),
-//         },
-//       ],
-//       model: "gpt-3.5-turbo",
-//     });
-//     improvedPrompt = completion.choices[0].message.content;
-//   } while (!improvedPrompt);
-
-//   return improvedPrompt;
-// };
 
 export const transcribeAudio = async (filePath: string) => {
   const transcription = await openai.audio.transcriptions.create({
