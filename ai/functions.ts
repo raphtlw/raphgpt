@@ -6,12 +6,7 @@ import { fmt, italic } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import decodeQR from "@paulmillr/qr/decode";
 import { ind } from "@raphtlw/indoc";
-import {
-  Conversation,
-  combineMessageContent,
-  runModel,
-  transcribeAudio,
-} from "ai";
+import { Conversation, combineMessageContent, runModel } from "ai";
 import { hyper, hyperStore } from "ai/hyper";
 import * as GoogleSearch from "api/google-search";
 import assert from "assert";
@@ -49,35 +44,6 @@ const openai = new OpenAI({ apiKey: Env.OPENAI_API_KEY });
 export type ContextType = { messageId: string; browser: Browser };
 
 export const functions = hyperStore<ContextType>({
-  transcribe_audio: hyper({
-    description: "Transcribe audio file",
-    args: {
-      audio: z.string().describe("The audio file url/path to transcribe"),
-    },
-    async handler({ audio }) {
-      const fileId = createId();
-
-      let url = audio;
-
-      const localPath = path.join(process.cwd(), "data", "file", audio);
-      if (!fs.existsSync(url)) {
-        if (fs.existsSync(localPath)) {
-          url = localPath;
-        } else {
-          const outPath = path.join(
-            process.cwd(),
-            "data",
-            "file",
-            `${fileId}.unknown`,
-          );
-          await pipeline(got.stream(url), fs.createWriteStream(outPath));
-          url = outPath;
-        }
-      }
-
-      return await transcribeAudio(url);
-    },
-  }),
   recognise_song: hyper({
     description:
       "Detect song from audio using sound recognition. To be used only if the user explicitly requests for music recognition.",
@@ -134,232 +100,232 @@ export const functions = hyperStore<ContextType>({
       return response.data.result || "No song found.";
     },
   }),
-  vision: hyper({
-    description: "Use OpenAI to describe an image",
-    args: {
-      image: z.string().describe("Link/path to image for GPT-4V model"),
-      usage: z
-        .string()
-        .describe(
-          "Description of intended purpose, instruction for the model on exactly what kind of information to extract",
-        ),
-      format: z.string().describe("Format of extracted data"),
-      system: z
-        .string()
-        .describe(
-          "Instructions for model to better understand what it needs to do, in extended detail.",
-        ),
-    },
-    async handler({ image, usage, format, system }) {
-      let url = image;
+  // vision: hyper({
+  //   description: "Use OpenAI to describe an image",
+  //   args: {
+  //     image: z.string().describe("Link/path to image for GPT-4V model"),
+  //     usage: z
+  //       .string()
+  //       .describe(
+  //         "Description of intended purpose, instruction for the model on exactly what kind of information to extract",
+  //       ),
+  //     format: z.string().describe("Format of extracted data"),
+  //     system: z
+  //       .string()
+  //       .describe(
+  //         "Instructions for model to better understand what it needs to do, in extended detail.",
+  //       ),
+  //   },
+  //   async handler({ image, usage, format, system }) {
+  //     let url = image;
 
-      const localPath = path.join(process.cwd(), "data", "file", image);
-      if (fs.existsSync(localPath)) {
-        url = localPath;
-      }
-      if (fs.existsSync(url)) {
-        const data = await fs.promises.readFile(url, {
-          encoding: "base64",
-        });
-        const mimeType = mime.getType(localPath);
-        url = `data:${mimeType};base64,${data}`;
-      }
+  //     const localPath = path.join(process.cwd(), "data", "file", image);
+  //     if (fs.existsSync(localPath)) {
+  //       url = localPath;
+  //     }
+  //     if (fs.existsSync(url)) {
+  //       const data = await fs.promises.readFile(url, {
+  //         encoding: "base64",
+  //       });
+  //       const mimeType = mime.getType(localPath);
+  //       url = `data:${mimeType};base64,${data}`;
+  //     }
 
-      const completion = await openai.chat.completions.create({
-        max_tokens: 2048,
-        messages: [
-          {
-            role: "system",
-            content: [
-              "You are an image analysis model, created to",
-              usage,
-              "You are to extract the data in the following format:",
-              format,
-              system,
-              ind(`
-              If image is a receipt:
-              You are to extract every bit of information from the receipt.
-              When extracting, please make sure to list every item individually.
-              Expand and elaborate on its name for brevity. Give additional tags
-              to what the item might be named.
-              If an item has more than one quantity, do not state its quantity.
-              Instead, repeat the item for the amount of quantities in the receipt,
-              and write its price next to it.
+  //     const completion = await openai.chat.completions.create({
+  //       max_tokens: 2048,
+  //       messages: [
+  //         {
+  //           role: "system",
+  //           content: [
+  //             "You are an image analysis model, created to",
+  //             usage,
+  //             "You are to extract the data in the following format:",
+  //             format,
+  //             system,
+  //             ind(`
+  //             If image is a receipt:
+  //             You are to extract every bit of information from the receipt.
+  //             When extracting, please make sure to list every item individually.
+  //             Expand and elaborate on its name for brevity. Give additional tags
+  //             to what the item might be named.
+  //             If an item has more than one quantity, do not state its quantity.
+  //             Instead, repeat the item for the amount of quantities in the receipt,
+  //             and write its price next to it.
 
-              Receipts are left to right. The information on the left always
-              shows the name of the item. If there are any sub-items, list them.
-              The prices are shown on the right. List the prices of every
-              individual item in detail.
+  //             Receipts are left to right. The information on the left always
+  //             shows the name of the item. If there are any sub-items, list them.
+  //             The prices are shown on the right. List the prices of every
+  //             individual item in detail.
 
-              If the receipt contains a GST record, list it.
-              If the receipt contains a Service Charge (S.C.) record, list it.
-              List all other properties of the receipt.`),
-            ].join("\n"),
-          },
-          {
-            content: [
-              { text: "Analyze the image in detail", type: "text" },
-              {
-                image_url: {
-                  url,
-                },
-                type: "image_url",
-              },
-            ],
-            role: "user",
-          },
-        ],
-        model: "gpt-4-turbo",
-      });
-      console.log("Completion:", inspect(completion.choices, true, 10, true));
+  //             If the receipt contains a GST record, list it.
+  //             If the receipt contains a Service Charge (S.C.) record, list it.
+  //             List all other properties of the receipt.`),
+  //           ].join("\n"),
+  //         },
+  //         {
+  //           content: [
+  //             { text: "Analyze the image in detail", type: "text" },
+  //             {
+  //               image_url: {
+  //                 url,
+  //               },
+  //               type: "image_url",
+  //             },
+  //           ],
+  //           role: "user",
+  //         },
+  //       ],
+  //       model: "gpt-4o",
+  //     });
+  //     console.log("Completion:", inspect(completion.choices, true, 10, true));
 
-      return completion.choices[0].message.content;
-    },
-  }),
-  process_video: hyper({
-    description: "Analyze frames from a video using GPT-4V",
-    args: {
-      video: z.string().describe("Link/path to video"),
-    },
-    async handler({ video }, { messageId }) {
-      const fileId = createId();
+  //     return completion.choices[0].message.content;
+  //   },
+  // }),
+  // process_video: hyper({
+  //   description: "Analyze frames from a video using GPT-4V",
+  //   args: {
+  //     video: z.string().describe("Link/path to video"),
+  //   },
+  //   async handler({ video }, { messageId }) {
+  //     const fileId = createId();
 
-      let url = video;
+  //     let url = video;
 
-      const localPath = path.join(process.cwd(), "data", "file", video);
-      if (!fs.existsSync(url)) {
-        if (fs.existsSync(localPath)) {
-          url = localPath;
-        } else {
-          const outPath = path.join(
-            process.cwd(),
-            "data",
-            "file",
-            `${fileId}.unknown`,
-          );
-          await pipeline(got.stream(url), fs.createWriteStream(outPath));
-          url = outPath;
-        }
-      }
+  //     const localPath = path.join(process.cwd(), "data", "file", video);
+  //     if (!fs.existsSync(url)) {
+  //       if (fs.existsSync(localPath)) {
+  //         url = localPath;
+  //       } else {
+  //         const outPath = path.join(
+  //           process.cwd(),
+  //           "data",
+  //           "file",
+  //           `${fileId}.unknown`,
+  //         );
+  //         await pipeline(got.stream(url), fs.createWriteStream(outPath));
+  //         url = outPath;
+  //       }
+  //     }
 
-      const message = await db.query.messages.findFirst({
-        where: eq(messages.id, messageId),
-      });
-      assert(message, "Failed to retrieve message from DB");
-      const msg: Message = JSON.parse(message.contextData);
+  //     const message = await db.query.messages.findFirst({
+  //       where: eq(messages.id, messageId),
+  //     });
+  //     assert(message, "Failed to retrieve message from DB");
+  //     const msg: Message = JSON.parse(message.contextData);
 
-      const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
-      const stitchedFramesOutputPath = path.join(
-        process.cwd(),
-        `${fileId}.png`,
-      );
+  //     const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
+  //     const stitchedFramesOutputPath = path.join(
+  //       process.cwd(),
+  //       `${fileId}.png`,
+  //     );
 
-      // extract frames
-      await fs.promises.mkdir(framesOutputPath);
-      await Command(
-        `ffmpeg -i ${url} -vf fps=30 ${framesOutputPath}/%d.png`,
-      ).run();
+  //     // extract frames
+  //     await fs.promises.mkdir(framesOutputPath);
+  //     await Command(
+  //       `ffmpeg -i ${url} -vf fps=30 ${framesOutputPath}/%d.png`,
+  //     ).run();
 
-      const videoFramePaths = await fs.promises
-        .readdir(framesOutputPath)
-        .then((filenames) =>
-          filenames
-            .sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]))
-            .map((filename) => path.join(framesOutputPath, filename)),
-        );
+  //     const videoFramePaths = await fs.promises
+  //       .readdir(framesOutputPath)
+  //       .then((filenames) =>
+  //         filenames
+  //           .sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]))
+  //           .map((filename) => path.join(framesOutputPath, filename)),
+  //       );
 
-      const selectedFramePaths: string[] = [];
-      const windowSize = 30;
-      const skip = 15;
-      for (
-        let i = 0;
-        i <= videoFramePaths.length - windowSize + skip;
-        i += skip
-      ) {
-        const laplacianVariances = await calculateDetailAmounts(
-          videoFramePaths.slice(i, i + windowSize),
-        );
-        selectedFramePaths.push(
-          laplacianVariances[laplacianVariances.length - 1].imagePath,
-        );
-      }
+  //     const selectedFramePaths: string[] = [];
+  //     const windowSize = 30;
+  //     const skip = 15;
+  //     for (
+  //       let i = 0;
+  //       i <= videoFramePaths.length - windowSize + skip;
+  //       i += skip
+  //     ) {
+  //       const laplacianVariances = await calculateDetailAmounts(
+  //         videoFramePaths.slice(i, i + windowSize),
+  //       );
+  //       selectedFramePaths.push(
+  //         laplacianVariances[laplacianVariances.length - 1].imagePath,
+  //       );
+  //     }
 
-      const processedFrames: Sharp[] = [];
+  //     const processedFrames: Sharp[] = [];
 
-      if (msg.video_note) {
-        // remove white border
-        for (const vfpath of selectedFramePaths) {
-          const rect = Buffer.from(
-            '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
-          );
-          const image = sharp(vfpath)
-            .resize(300, 300)
-            .png()
-            .composite([{ input: rect, blend: "dest-in" }]);
-          processedFrames.push(image);
-        }
-      } else {
-        for (const vfpath of selectedFramePaths) {
-          processedFrames.push(sharp(vfpath));
-        }
-      }
+  //     if (msg.video_note) {
+  //       // remove white border
+  //       for (const vfpath of selectedFramePaths) {
+  //         const rect = Buffer.from(
+  //           '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
+  //         );
+  //         const image = sharp(vfpath)
+  //           .resize(300, 300)
+  //           .png()
+  //           .composite([{ input: rect, blend: "dest-in" }]);
+  //         processedFrames.push(image);
+  //       }
+  //     } else {
+  //       for (const vfpath of selectedFramePaths) {
+  //         processedFrames.push(sharp(vfpath));
+  //       }
+  //     }
 
-      processedFrames.map((f) => f.jpeg());
+  //     processedFrames.map((f) => f.jpeg());
 
-      // stitch frames together
-      const stitchedFrames = await joinImages(
-        await Promise.all(processedFrames.map((frame) => frame.toBuffer())),
-        {
-          direction: "horizontal",
-        },
-      );
-      await stitchedFrames.toFile(stitchedFramesOutputPath);
-      const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
-        encoding: "base64",
-      });
+  //     // stitch frames together
+  //     const stitchedFrames = await joinImages(
+  //       await Promise.all(processedFrames.map((frame) => frame.toBuffer())),
+  //       {
+  //         direction: "horizontal",
+  //       },
+  //     );
+  //     await stitchedFrames.toFile(stitchedFramesOutputPath);
+  //     const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
+  //       encoding: "base64",
+  //     });
 
-      // save image which prompted the response
-      const lastFramePath = path.join("data", "file", `${fileId}.last.png`);
-      await processedFrames[processedFrames.length - 1].toFile(lastFramePath);
+  //     // save image which prompted the response
+  //     const lastFramePath = path.join("data", "file", `${fileId}.last.png`);
+  //     await processedFrames[processedFrames.length - 1].toFile(lastFramePath);
 
-      // delete temp folders
-      await Promise.all([
-        fs.promises.rm(framesOutputPath, { force: true, recursive: true }),
-        fs.promises.rm(stitchedFramesOutputPath),
-      ]);
+  //     // delete temp folders
+  //     await Promise.all([
+  //       fs.promises.rm(framesOutputPath, { force: true, recursive: true }),
+  //       fs.promises.rm(stitchedFramesOutputPath),
+  //     ]);
 
-      // ask GPT-4 to describe video, with audio transcript
-      const completion = await openai.chat.completions.create({
-        max_tokens: 2048,
-        messages: [
-          {
-            content: [
-              {
-                text: `The image shows video frames in sequence. Describe what's likely going on in each frame.`,
-                type: "text",
-              },
-              {
-                image_url: {
-                  url: `data:image/jpeg;base64,${framestrip}`,
-                },
-                type: "image_url",
-              },
-            ],
-            role: "user",
-          },
-        ],
-        model: "gpt-4-turbo",
-      });
+  //     // ask GPT-4 to describe video, with audio transcript
+  //     const completion = await openai.chat.completions.create({
+  //       max_tokens: 2048,
+  //       messages: [
+  //         {
+  //           content: [
+  //             {
+  //               text: `The image shows video frames in sequence. Describe what's likely going on in each frame.`,
+  //               type: "text",
+  //             },
+  //             {
+  //               image_url: {
+  //                 url: `data:image/jpeg;base64,${framestrip}`,
+  //               },
+  //               type: "image_url",
+  //             },
+  //           ],
+  //           role: "user",
+  //         },
+  //       ],
+  //       model: "gpt-4-turbo",
+  //     });
 
-      return [
-        completion.choices[0].message.content,
-        `Analyze the video's last frame to better respond to the transcript: ${lastFramePath}`,
-      ].join("\n");
-    },
-  }),
+  //     return [
+  //       completion.choices[0].message.content,
+  //       `Analyze the video's last frame to better respond to the transcript: ${lastFramePath}`,
+  //     ].join("\n");
+  //   },
+  // }),
   generate_image: hyper({
     description:
-      "Generate image using DALL-E model. Only to be used when user explicitly requests for an AI generated image.",
+      "Generate image using DALL-E model. Only to be used when user explicitly requests for an AI generated image. Returns the URL to the generated image. Remember to keep the existing URL parameters when outputting the images.",
     args: {
       prompt: z
         .string()

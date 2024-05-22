@@ -25,17 +25,20 @@ import { BROWSER } from "bot/browser";
 import { Command } from "bot/command";
 import { sendMarkdownMessage } from "bot/message";
 import { chatAction } from "bot/tasks";
-import { timestamp } from "bot/time";
+import { calculateDetailAmounts } from "common/image-processing";
 import { intlFormat } from "date-fns";
 import { db } from "db";
 import { guss, messages, openaiMessages } from "db/schema";
 import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { ElevenLabsClient } from "elevenlabs";
 import fs from "fs";
 import { Bot, Context, GrammyError, HttpError, InputFile } from "grammy";
 import { Message } from "grammy/types";
+import joinImages from "join-images";
 import ollama from "ollama";
 import path from "path";
 import { Env } from "secrets/env";
+import sharp, { Sharp } from "sharp";
 import { inspect } from "util";
 
 const bot = new Bot<FileFlavor<Context>>(Env.TELEGRAM_API_KEY);
@@ -207,7 +210,10 @@ const createDraftFromMsg = async (msg: Message) => {
 
   // get cached message
   const cachedMessage = await db.query.messages.findFirst({
-    where: eq(messages.telegramId, msg.message_id.toString()),
+    where: and(
+      eq(messages.telegramChatId, msg.chat.id.toString()),
+      eq(messages.telegramId, msg.message_id.toString()),
+    ),
   });
   assert(cachedMessage);
 
@@ -234,9 +240,14 @@ const createDraftFromMsg = async (msg: Message) => {
     });
   }
   if (msg.photo) {
+    const imageData = await fs.promises.readFile(fullCachedFilePath!, {
+      encoding: "base64",
+    });
     draft.add({
-      type: "text",
-      text: `[image]: ${cachedMessage.file}`,
+      type: "image_url",
+      image_url: {
+        url: `data:image/jpeg;base64,${imageData}`,
+      },
     });
   }
   if (msg.voice || msg.audio) {
@@ -246,12 +257,98 @@ const createDraftFromMsg = async (msg: Message) => {
       type: "text",
       text: transcription,
     });
-    draft.add({
-      type: "text",
-      text: `[audio]: ${cachedMessage.file}`,
-    });
   }
   if (msg.video_note || msg.video) {
+    const fileId = createId();
+
+    const framesOutputPath = path.join(process.cwd(), `${fileId}.capture`);
+    // const stitchedFramesOutputPath = path.join(process.cwd(), `${fileId}.png`);
+
+    // extract frames
+    await fs.promises.mkdir(framesOutputPath);
+    await Command(
+      `ffmpeg -i ${fullCachedFilePath} -vf fps=30 ${framesOutputPath}/%d.png`,
+    ).run();
+
+    const videoFramePaths = await fs.promises
+      .readdir(framesOutputPath)
+      .then((filenames) =>
+        filenames
+          .sort((a, b) => Number(a.split(".")[0]) - Number(b.split(".")[0]))
+          .map((filename) => path.join(framesOutputPath, filename)),
+      );
+
+    const selectedFramePaths: string[] = [];
+    const windowSize = 30;
+    const skip = 15;
+    for (
+      let i = 0;
+      i <= videoFramePaths.length - windowSize + skip;
+      i += skip
+    ) {
+      const laplacianVariances = await calculateDetailAmounts(
+        videoFramePaths.slice(i, i + windowSize),
+      );
+      selectedFramePaths.push(
+        laplacianVariances[laplacianVariances.length - 1].imagePath,
+      );
+    }
+
+    const processedFrames: Sharp[] = [];
+
+    if (msg.video_note) {
+      // remove white border
+      for (const vfpath of selectedFramePaths) {
+        const rect = Buffer.from(
+          '<svg><rect x="0" y="0" width="300" height="300" rx="300" ry="300"/></svg>',
+        );
+        const image = sharp(vfpath)
+          .resize(300, 300)
+          .png()
+          .composite([{ input: rect, blend: "dest-in" }]);
+        processedFrames.push(image);
+      }
+    } else {
+      for (const vfpath of selectedFramePaths) {
+        processedFrames.push(sharp(vfpath));
+      }
+    }
+
+    processedFrames.map((f) => f.jpeg());
+
+    for (const frame of processedFrames) {
+      const ibuf = await frame.toBuffer();
+      const data = ibuf.toString("base64");
+      draft.add({
+        type: "image_url",
+        image_url: {
+          url: `data:image/jpeg;base64,${data}`,
+        },
+      });
+    }
+
+    // stitch frames together
+    // const stitchedFrames = await joinImages(
+    //   await Promise.all(processedFrames.map((frame) => frame.toBuffer())),
+    //   {
+    //     direction: "horizontal",
+    //   },
+    // );
+    // await stitchedFrames.toFile(stitchedFramesOutputPath);
+    // const framestrip = await fs.promises.readFile(stitchedFramesOutputPath, {
+    //   encoding: "base64",
+    // });
+
+    // save image which prompted the response
+    // const lastFramePath = path.join("data", "file", `${fileId}.last.png`);
+    // await processedFrames[processedFrames.length - 1].toFile(lastFramePath);
+
+    // delete temp folders
+    await Promise.all([
+      fs.promises.rm(framesOutputPath, { force: true, recursive: true }),
+      // fs.promises.rm(stitchedFramesOutputPath),
+    ]);
+
     const audioOutputPath = path.join(
       process.cwd(),
       "data",
@@ -274,10 +371,6 @@ const createDraftFromMsg = async (msg: Message) => {
     draft.add({
       type: "text",
       text: transcription,
-    });
-    draft.add({
-      type: "text",
-      text: `[video]: ${cachedMessage.file}`,
     });
   }
   if (msg.sticker) {
@@ -338,40 +431,15 @@ bot
       history = history.takeLast(10);
     }
 
+    // set system prompt
     history.append({
       role: "system",
       content: ind(`
       You are a friendly and helpful assistant named RaphGPT.
       You have eyes and can see. Whenever photo/image, you say vision.
       You can watch videos.
-
-      Telegram supports location sharing. If the user asks a question requiring their location, ask them to send their location first before doing anything.
-
-      As a Large Language Model operating on Telegram, you have been given additional
-      functions that help process media content.
-      As Telegram has modalities other than text, it is important, to process other
-      types of messages, in order to give users the best experience.
-
-      User might send the following kinds of media content in the following format:
-      - Image/photo, as [image]: <url>
-      - Audio, as [audio]: <url>
-      - Video, as [video]: <url>
-
-      The path to the media content is specified in angled brackets.
-      Example: ABC.mp4
-
-      The tools/functions you have available are to be used to process the media.
-      Their output is a natural language description provided by the GPT-4 vision
-      model. Respond with the image details, and say that you have successfully
-      stored the associated details.
-
-      When math functions are invoked, list all the operations you made and the
-      source of the expressions. This is to ensure the correctness of
-      your calculations.
-
-      Call each function sequentially as much as possible, until you get
-      the best results the user needs. When the model encounters a context
-      length problem, clear the context length using delete_older_function_calls.`),
+  
+      Telegram supports location sharing. If the user asks a question requiring their location, ask them to send their location first before doing anything.`),
     });
 
     history.insert({
@@ -406,7 +474,7 @@ bot
               browser: BROWSER,
             },
             functions,
-            "gpt-3.5-turbo-0125",
+            "gpt-4o",
           );
 
           try {
@@ -457,14 +525,18 @@ bot
                 {
                   role: "user",
                   content: ind(`
-                  Act as a human, with a Singaporean accent.
-                  You are to rewrite robotic outputs in a more humanized way for the human
-                  overlords to have a better hearing experience. To understand the words carefully,
-                  they need filler words like 'uhh', 'umm', 'ahh', 'like' and 'so uhh'.
-                  Introduce pauses and stutters to make sentences sound more humane.
-                  For pauses, write [pause].
+                  Your outputs will be read by a speech synthesis model which will
+                  convert text to speech. Here are some ways you can control the
+                  output of the speech:
+                  - Using <break time="1.0s" /> will introduce pauses into the text, where time can be up to 3.0s long.
+                  - If you want to express a specific emotion, the best approach is to write in a style similar to that of a book. To find good prompts to use, you can flip through some books and identify words and phrases that convey the desired emotion.
+                    For instance, you can use dialogue tags to express emotions, such as he said, confused, or he shouted angrily. These types of prompts will help the AI understand the desired emotional tone and try to generate a voiceover that accurately reflects it.
+                  - Introduce filler-words including but not limited to "uhh", "ahh", to make responses easier to follow and understand for the user.
                   The output should be made easier to listen to when read out.
                   Therefore, remove links, and explain things in better detail.
+                  Introduce pauses to give time for the listener to understand.
+                  Remove all headings, bullet point characters and asterisks as the model will read it character by character, which is not desired.
+                  Summarize the text to make it easier to listen to.
 
                   Do not ask the user any question, just respond with the output and the output only.`),
                 },
@@ -476,7 +548,7 @@ bot
                   ),
                 },
               ],
-              model: "gpt-3.5-turbo-0125",
+              model: "gpt-4o",
               max_tokens: 4096,
             });
             toSay = completion.choices[0].message.content;
@@ -484,43 +556,43 @@ bot
           console.log("Humanized TTS:", toSay);
 
           // generate speech for response
-          const mp3 = await openai.audio.speech.create({
-            input: toSay,
-            model: "tts-1-hd",
-            voice: "alloy",
+          const elevenlabs = new ElevenLabsClient({
+            apiKey: Env.ELEVENLABS_API_KEY,
           });
-          const uniqueFileName = `${timestamp()}_speech`;
-          const speechFilePath = path.join(
-            process.cwd(),
-            `${uniqueFileName}.mp3`,
-          );
-          const processedSpeechFilePath = path.join(
-            process.cwd(),
-            `${uniqueFileName}_processed.mp3`,
-          );
+          const mp3 = await elevenlabs.generate({
+            text: toSay,
+            voice: "4r4ZFyKg111zbuicgQbW",
+            model_id: "eleven_turbo_v2",
+          });
+          // const uniqueFileName = `${timestamp()}_speech`;
+          // const speechFilePath = path.join(
+          //   process.cwd(),
+          //   `${uniqueFileName}.mp3`,
+          // );
+          // const processedSpeechFilePath = path.join(
+          //   process.cwd(),
+          //   `${uniqueFileName}_processed.mp3`,
+          // );
 
-          await fs.promises.writeFile(
-            speechFilePath,
-            Buffer.from(await mp3.arrayBuffer()),
-          );
-          await Command(
-            `ffmpeg -i "${speechFilePath}" -filter:a "volume=6dB" ${processedSpeechFilePath}`,
-          ).run();
+          // await fs.promises.writeFile(
+          //   speechFilePath,
+          //   Buffer.from(await mp3.toArray()),
+          // );
+          // await Command(
+          //   `ffmpeg -i "${speechFilePath}" -filter:a "volume=6dB" ${processedSpeechFilePath}`,
+          // ).run();
 
-          await ctx.replyWithVoice(
-            new InputFile(fs.createReadStream(processedSpeechFilePath)),
-            {
-              message_thread_id: Number(messageThreadId),
-              reply_parameters: {
-                chat_id: ctx.chat.id,
-                message_id: ctx.msg.message_id,
-                allow_sending_without_reply: true,
-              },
+          await ctx.replyWithVoice(new InputFile(mp3), {
+            message_thread_id: Number(messageThreadId),
+            reply_parameters: {
+              chat_id: ctx.chat.id,
+              message_id: ctx.msg.message_id,
+              allow_sending_without_reply: true,
             },
-          );
+          });
 
-          await fs.promises.unlink(speechFilePath);
-          await fs.promises.unlink(processedSpeechFilePath);
+          // await fs.promises.unlink(speechFilePath);
+          // await fs.promises.unlink(processedSpeechFilePath);
         },
         {
           message_thread_id: Number(messageThreadId),
@@ -564,7 +636,7 @@ bot
                 ${JSON.stringify(conversation.get())}`),
               },
             ],
-            model: "gpt-3.5-turbo",
+            model: "gpt-4o",
           });
           newTopicName = completion.choices[0].message.content;
         } while (!newTopicName);
@@ -818,27 +890,27 @@ await bot.api.setMyCommands(
   },
 );
 
-// regularGroups
-//   .chatType(["group", "supergroup"])
-//   .on("message:entities:mention")
-//   .branch(
-//     (ctx) =>
-//       ctx
-//         .entities("mention")
-//         .findIndex((entity) => entity.text === "@raphgptbot") > -1,
-//     async (ctx, next) => {
-//       await next();
-//     },
-//     async (ctx, next) => {
-//       await next();
-//     }
-//   );
+regularGroups
+  .chatType(["group", "supergroup"])
+  .on("message:entities:mention")
+  .branch(
+    (ctx) =>
+      ctx
+        .entities("mention")
+        .findIndex((entity) => entity.text === "@raphgptbot") > -1,
+    async (ctx, next) => {
+      await next();
+    },
+    async (ctx, next) => {
+      await next();
+    },
+  );
 
-// regularGroups
-//   .chatType(["group", "supergroup"])
-//   .on("message", async (ctx, next) => {
-//     await next();
-//   });
+regularGroups
+  .chatType(["group", "supergroup"])
+  .on("message", async (ctx, next) => {
+    await next();
+  });
 
 await bot.api.setMyCommands([
   { command: "start", description: "Start the bot" },
@@ -856,6 +928,10 @@ bot.catch((err) => {
   } else {
     console.error("Unknown error:", err.error);
   }
+});
+
+process.on("uncaughtException", (err) => {
+  console.error(err);
 });
 
 const handle = run(bot);

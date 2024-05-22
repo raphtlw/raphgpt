@@ -131,7 +131,7 @@ export const runModel = async <Context>(
   current: Conversation,
   context: Context,
   functions: HyperStore<Context>,
-  model: OpenAI.Chat.Completions.ChatCompletionCreateParams["model"] = "gpt-3.5-turbo-0125",
+  model: OpenAI.Chat.Completions.ChatCompletionCreateParams["model"] = "gpt-4o",
 ) => {
   let completion: OpenAI.Chat.Completions.ChatCompletion | null = null;
   let tries = 0;
@@ -206,7 +206,7 @@ export const runModel = async <Context>(
           content = response;
         } else if (Array.isArray(response)) {
           if (response.length > 0) {
-            content = response.map((o) => `1. ${JSON.stringify(o)}`).join("\n");
+            content = response.map((o) => JSON.stringify(o)).join("\n");
           } else {
             content = "No response found.";
           }
@@ -220,7 +220,7 @@ export const runModel = async <Context>(
       }
 
       // limit content length to fit context size for model
-      const encoder = encoding_for_model("gpt-3.5-turbo-0125");
+      const encoder = encoding_for_model("gpt-4o");
       const encoded = encoder.encode(content);
       const truncatedToFitModelContextLength = encoded.slice(
         0,

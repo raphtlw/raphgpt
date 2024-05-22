@@ -6,6 +6,7 @@ export const envSchema = z.object({
   AUDD_API_TOKEN: z.string(),
   COINGECKO_API_KEY: z.string(),
   DATABASE_URL: z.string(),
+  ELEVENLABS_API_KEY: z.string(),
   FUNCTION_CALL_TOKEN_THRESHOLD: z.coerce.number(),
   GOOGLE_AI_API_KEY: z.string(),
   GOOGLE_CUSTOM_SEARCH_API_KEY: z.string(),
