@@ -2,6 +2,7 @@ import { bold, fmt, italic, pre, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { hyper, hyperStore } from "@raphtlw/hyperfunc";
 import { db, schema } from "@repo/db";
+import { fileTypeFromStream } from "file-type";
 import fs from "fs";
 import got from "got";
 import { InputFile } from "grammy";
@@ -12,6 +13,8 @@ import {
   InputMediaVideo,
 } from "grammy/types";
 import OpenAI from "openai";
+import os from "os";
+import path from "path";
 import Replicate from "replicate";
 import { pipeline as streamPipeline } from "stream/promises";
 import { encoding_for_model } from "tiktoken";
@@ -684,31 +687,31 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
       { prompt, width, height, negative_prompt },
       { chatId, msgId },
     ) {
-      const replicate = new Replicate({
-        auth: process.env.REPLICATE_API_TOKEN,
-      });
+      const replicate = new Replicate();
       logger.info(
         { prompt, width, height, negative_prompt },
         "Generating image using SDXL with params",
       );
-      const output = (await replicate.run(
-        "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc",
-        {
-          input: {
-            width,
-            height,
-            prompt,
-            negative_prompt,
-            prompt_strength: 0.8,
-            high_noise_frac: 0.8,
-            guidance_scale: 7.5,
-            refine: "expert_ensemble_refiner",
-            apply_watermark: false,
-            num_inference_steps: 50,
-            disable_safety_checker: true,
+      const output = await replicate
+        .run(
+          "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc",
+          {
+            input: {
+              width,
+              height,
+              prompt,
+              negative_prompt,
+              prompt_strength: 0.8,
+              high_noise_frac: 0.8,
+              guidance_scale: 7.5,
+              refine: "expert_ensemble_refiner",
+              apply_watermark: false,
+              num_inference_steps: 50,
+              disable_safety_checker: true,
+            },
           },
-        },
-      )) as string[];
+        )
+        .then((o) => z.array(z.string()).parse(o));
 
       const caption = fmt([
         fmt`\n${bold("Prompt")}: ${prompt}`,
@@ -727,6 +730,52 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
       });
 
       return output;
+    },
+  }),
+
+  rembg: hyper({
+    description:
+      "Removes background from images. Specify absolute filepath or URL",
+    args: {
+      filepath_or_url: z.string(),
+    },
+    async handler({ filepath_or_url }, { chatId, msgId }) {
+      let filepath: string | null = null;
+      let url: URL | null = null;
+
+      try {
+        url = new URL(filepath_or_url);
+        const file = got.stream(url);
+        filepath = path.join(
+          os.tmpdir(),
+          `rembg-${createId()}.${fileTypeFromStream(file)}`,
+        );
+        await streamPipeline(file, fs.createWriteStream(filepath));
+      } catch {
+        if (!fs.existsSync(filepath_or_url)) return "File not found.";
+        filepath = filepath_or_url;
+      }
+
+      const replicate = new Replicate();
+      const result = await replicate
+        .run(
+          "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+          {
+            input: {
+              image: url ? url : await fs.promises.readFile(filepath),
+            },
+          },
+        )
+        .then((o) => z.string().parse(o));
+
+      await telegram.sendPhoto(chatId, result, {
+        reply_parameters: {
+          message_id: msgId,
+          allow_sending_without_reply: true,
+        },
+      });
+
+      return ["Output image sent to user.", result].join("\n");
     },
   }),
 
