@@ -1,0 +1,9 @@
+{
+  "name": "beam",
+  "private": true,
+  "scripts": {
+    "python": "../../venv/bin/python",
+    "beam": "../../venv/bin/beam",
+    "clean": "rimraf __pycache__"
+  }
+}

@@ -1,0 +1,70 @@
+name: "Build and Deploy"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy-telegram:
+    name: Deploy Telegram Bot Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}"
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Configure Docker
+        run: gcloud auth configure-docker asia-southeast1-docker.pkg.dev
+      - name: Install Infisical
+        run: |
+          curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | sudo -E bash
+          sudo apt-get update && sudo apt-get install -y infisical
+      - name: Login to Infisical and get auth token
+        run: |
+          t=$(infisical login --method=universal-auth \
+                              --client-id=${{ secrets.INFISICAL_CLIENT_ID }} \
+                              --client-secret=${{ secrets.INFISICAL_CLIENT_SECRET }} \
+                              --plain --silent)
+          echo "INFISICAL_TOKEN=$t" >> "$GITHUB_OUTPUT"
+        id: infisical_auth
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push container image
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: asia-southeast1-docker.pkg.dev/raphgptbot/raphgpt/telegram-bot:latest
+          cache-from: type=registry,ref=ghcr.io/raphtlw/raphgpt-telegram-bot:buildcache
+          cache-to: type=registry,ref=ghcr.io/raphtlw/raphgpt-telegram-bot:buildcache,mode=max
+          secrets: |
+            "INFISICAL_TOKEN=${{ steps.infisical_auth.outputs.INFISICAL_TOKEN }}"
+          build-args: |
+            "INFISICAL_PROJECT_ID=${{ vars.INFISICAL_PROJECT_ID }}"
+          target: telegram-bot
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: telegram-bot
+          region: asia-southeast1
+          image: asia-southeast1-docker.pkg.dev/raphgptbot/raphgpt/telegram-bot:latest
+          env_vars: |
+            INFISICAL_TOKEN=${{ steps.infisical_auth.outputs.INFISICAL_TOKEN }}
+            NODE_ENV=production

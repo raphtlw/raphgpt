@@ -1,0 +1,23 @@
+{
+  "name": "@repo/logger",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "run-file": "DEBUG=* infisical run --env=dev -- tsx --no-warnings",
+    "run-file-watch": "DEBUG=* infisical run --env=dev -- tsx --no-warnings --watch",
+    "build": "tsc --outDir dist",
+    "clean": "rimraf dist",
+    "check": "tsc --noEmit"
+  },
+  "main": "dist/index.js",
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^20"
+  },
+  "dependencies": {
+    "pino": "^9.3.1",
+    "pino-loki": "^2.3.0",
+    "pino-pretty": "^11.2.1"
+  },
+  "type": "module"
+}

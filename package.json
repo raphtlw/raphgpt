@@ -1,0 +1,24 @@
+{
+  "name": "raphgpt",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "clean": "turbo clean",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "check": "turbo check"
+  },
+  "devDependencies": {
+    "prettier": "latest",
+    "prettier-plugin-organize-imports": "latest",
+    "rimraf": "latest",
+    "tsx": "latest",
+    "turbo": "^2.0.9",
+    "typescript": "^5.4.5"
+  },
+  "packageManager": "pnpm@8.15.6",
+  "engines": {
+    "node": ">=18"
+  }
+}

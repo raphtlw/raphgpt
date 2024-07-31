@@ -1,0 +1,27 @@
+{
+  "name": "@repo/db",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "run-file": "DEBUG=* infisical run --env=dev -- tsx --no-warnings",
+    "run-file-watch": "DEBUG=* infisical run --env=dev -- tsx --no-warnings --watch",
+    "drizzle-kit": "infisical run --env=dev -- ./node_modules/.bin/drizzle-kit",
+    "build": "tsup",
+    "clean": "rimraf dist",
+    "check": "tsc --noEmit"
+  },
+  "main": "dist/index.js",
+  "types": "dist/types.d.ts",
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^20",
+    "drizzle-kit": "^0.23.0",
+    "tsup": "^8.2.3"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.7.0",
+    "@paralleldrive/cuid2": "^2.2.2",
+    "drizzle-orm": "^0.32.0"
+  },
+  "type": "module"
+}

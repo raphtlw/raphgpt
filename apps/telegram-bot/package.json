@@ -1,0 +1,43 @@
+{
+  "name": "telegram-bot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "run-file": "DEBUG=* infisical run --env=dev -- tsx --no-warnings",
+    "run-file-watch": "DEBUG=* infisical run --env=dev -- tsx --no-warnings --watch",
+    "drizzle-kit": "infisical run --env=dev -- ./node_modules/.bin/drizzle-kit",
+    "dev": "pnpm --silent run-file-watch main.ts",
+    "build": "tsc --outDir dist",
+    "clean": "rimraf dist",
+    "start": "node dist/main.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.12.0",
+    "@grammyjs/parse-mode": "^1.10.0",
+    "@grammyjs/runner": "^2.0.3",
+    "@paralleldrive/cuid2": "^2.2.2",
+    "@raphtlw/hyperfunc": "^0.0.7",
+    "@repo/db": "workspace:*",
+    "@repo/logger": "workspace:*",
+    "file-type": "^19.3.0",
+    "form-data": "^4.0.0",
+    "globby": "^14.0.2",
+    "google-auth-library": "^9.12.0",
+    "got": "^14.4.1",
+    "grammy": "^1.27.0",
+    "mime": "^4.0.4",
+    "openai": "^4.53.2",
+    "pdf2pic": "^3.1.1",
+    "puppeteer": "^22.13.1",
+    "replicate": "^0.31.1",
+    "sharp": "^0.33.4",
+    "telegramify-markdown": "^1.2.1",
+    "tiktoken": "^1.0.15",
+    "zod": "^3.23.8"
+  },
+  "type": "module"
+}
