@@ -1,7 +1,7 @@
 import { Storage } from "@google-cloud/storage";
 import { bold, fmt, italic, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
-import { and, db, desc, eq, schema, sql } from "@repo/db";
+import { and, asc, db, desc, eq, schema, sql } from "@repo/db";
 import assert from "assert";
 import { FileTypeResult, fileTypeFromFile } from "file-type";
 import FormData from "form-data";
@@ -656,6 +656,7 @@ bot.on("message", async (ctx) => {
         eq(schema.messages.chatId, ctx.chatId),
         eq(schema.messages.threadId, ctx.msg.message_thread_id),
       ),
+      orderBy: asc(schema.messages.created),
     });
 
     messages.push(
@@ -664,6 +665,7 @@ bot.on("message", async (ctx) => {
   } else {
     const messagesFromChat = await db.query.messages.findMany({
       where: eq(schema.messages.chatId, ctx.chatId),
+      orderBy: asc(schema.messages.created),
     });
 
     // Chunk messages into user + assistant
