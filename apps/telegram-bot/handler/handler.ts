@@ -889,6 +889,13 @@ bot.on("message", async (ctx) => {
       logger.error(e, "Unable to send MarkdownV2 message");
       logger.info("Uploading message to web");
 
+      // limit content length to fit context size for model
+      const enc = encoding_for_model("gpt-4o");
+      const tok = enc.encode(md);
+      const lim = tok.slice(0, 1024);
+      const txt = enc.decode(lim).toString();
+      enc.free();
+
       const completion: OpenAI.Chat.ChatCompletion = await got
         .post("https://openrouter.ai/api/v1/chat/completions", {
           headers: {
@@ -905,7 +912,7 @@ bot.on("message", async (ctx) => {
                 role: "user",
                 content: [
                   "Generate a suitable title for the following article:",
-                  md,
+                  txt,
                   "Reply only with the title and nothing else.",
                   "Do not use any quotes to wrap the title.",
                 ].join("\n"),
