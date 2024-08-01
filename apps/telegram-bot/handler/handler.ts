@@ -33,7 +33,7 @@ bot.on("callback_query:data", async (ctx) => {
   const payload = JSON.parse(ctx.callbackQuery.data);
   if (payload.action === "deposit-amount-chosen") {
     const amount: number = payload.amount;
-    const value = amount;
+    const value = amount + (amount / 100) * 3.4 + 50;
 
     await ctx.replyWithInvoice(
       "Buy Credits (USD)",
@@ -234,7 +234,7 @@ bot.command("topup", async (ctx) => {
     return await ctx.reply("Min. Amount is 100 tokens.");
   }
 
-  const value = amount;
+  const value = amount + (amount / 100) * 3.4 + 50;
 
   await ctx.replyWithInvoice(
     "Buy Credits (USD)",
@@ -893,7 +893,7 @@ bot.on("message", async (ctx) => {
       const enc = encoding_for_model("gpt-4o");
       const tok = enc.encode(md);
       const lim = tok.slice(0, 1024);
-      const txt = enc.decode(lim).toString();
+      const txt = new TextDecoder().decode(enc.decode(lim));
       enc.free();
 
       const completion: OpenAI.Chat.ChatCompletion = await got

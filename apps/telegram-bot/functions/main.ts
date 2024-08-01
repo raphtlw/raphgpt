@@ -93,7 +93,7 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
           const enc = encoding_for_model("gpt-4o");
           const tok = enc.encode(markdown.result);
           const lim = tok.slice(0, 512);
-          const txt = enc.decode(lim).toString();
+          const txt = new TextDecoder().decode(enc.decode(lim));
           enc.free();
 
           if (txt.length > 0) {
