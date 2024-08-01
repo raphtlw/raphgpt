@@ -1,5 +1,5 @@
 import { Storage } from "@google-cloud/storage";
-import { bold, fmt, underline } from "@grammyjs/parse-mode";
+import { bold, fmt, italic, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { and, db, desc, eq, schema, sql } from "@repo/db";
 import assert from "assert";
@@ -32,8 +32,8 @@ bot.on("callback_query:data", async (ctx) => {
   );
   const payload = JSON.parse(ctx.callbackQuery.data);
   if (payload.action === "deposit-amount-chosen") {
-    const amount = payload.amount;
-    const value = amount + (amount / 100) * 3;
+    const amount: number = payload.amount;
+    const value = amount;
 
     await ctx.replyWithInvoice(
       "Buy Credits (USD)",
@@ -327,10 +327,16 @@ bot.on("message", async (ctx) => {
         username: ctx.from.username,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
-        credits: 0,
+        credits: 69,
       })
       .returning()
       .get();
+    await ctx.replyFmt([
+      bold(
+        `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
+      ),
+      italic(`You can get more tokens from the store (/topup)`),
+    ]);
   }
   assert(user, "Unable to retrieve user");
 
