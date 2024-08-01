@@ -191,10 +191,10 @@ bot.command("topup", async (ctx) => {
       ].join("\n"),
       {
         reply_markup: new InlineKeyboard()
-          .text("100", setPayload(100))
-          .text("150", setPayload(150))
-          .text("200", setPayload(200))
-          .text("300", setPayload(300))
+          .text("$1 (100 tokens)", setPayload(100))
+          .text("$1.50 (150 tokens)", setPayload(150))
+          .text("$2 (200 tokens)", setPayload(200))
+          .text("$3 (300 tokens)", setPayload(300))
           .row()
           .text("Cancel ❌", JSON.stringify({ action: "cancel" })),
       },
@@ -932,7 +932,7 @@ bot.on("message", async (ctx) => {
       await db
         .update(schema.users)
         .set({
-          credits: sql`${schema.users.credits} - ${cost}`,
+          credits: sql`${schema.users.credits} - ${cost * 100}`,
         })
         .where(eq(schema.users.telegramId, ctx.from.id));
 
