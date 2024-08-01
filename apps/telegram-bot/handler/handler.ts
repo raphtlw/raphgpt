@@ -33,8 +33,7 @@ bot.on("callback_query:data", async (ctx) => {
   const payload = JSON.parse(ctx.callbackQuery.data);
   if (payload.action === "deposit-amount-chosen") {
     const amount: number = payload.amount;
-    const value = amount + (amount / 100) * 3.4 + 50;
-    logger.debug({ amount, value });
+    const value = Math.trunc(amount + (amount / 100) * 3.4 + 50);
 
     await ctx.replyWithInvoice(
       "Buy Credits (USD)",
@@ -235,7 +234,7 @@ bot.command("topup", async (ctx) => {
     return await ctx.reply("Min. Amount is 100 tokens.");
   }
 
-  const value = amount + (amount / 100) * 3.4 + 50;
+  const value = Math.trunc(amount + (amount / 100) * 3.4 + 50);
 
   await ctx.replyWithInvoice(
     "Buy Credits (USD)",
