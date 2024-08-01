@@ -156,8 +156,8 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
       });
 
       await Promise.all([
-        fs.promises.rm(spokenPath),
-        fs.promises.rm(outputPath),
+        fs.promises.rm(spokenPath, { recursive: true, force: true }),
+        fs.promises.rm(outputPath, { recursive: true, force: true }),
       ]);
 
       return "Voice message sent to user.";
@@ -248,9 +248,9 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
         });
 
         await Promise.all([
-          fs.promises.rm(lyricsPath),
-          fs.promises.rm(musicPath),
-          fs.promises.rm(resultPath),
+          fs.promises.rm(lyricsPath, { recursive: true, force: true }),
+          fs.promises.rm(musicPath, { recursive: true, force: true }),
+          fs.promises.rm(resultPath, { recursive: true, force: true }),
         ]);
 
         return "Voice message sent to user.";
