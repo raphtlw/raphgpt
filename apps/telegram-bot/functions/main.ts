@@ -322,6 +322,7 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
     },
     async handler({ file_path }) {
       logger.info(`Reading file at ${file_path}`);
+      if (!fs.existsSync(file_path)) throw "File does not exist";
       const contents = await fs.promises.readFile(file_path, {
         encoding: "utf-8",
       });
