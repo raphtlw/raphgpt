@@ -600,8 +600,6 @@ bot.on("message", async (ctx) => {
           type: "text",
           text: "You should call read_file tool to read files you may need.",
         });
-
-        await fs.promises.rm(contentDir, { recursive: true, force: true });
       }
     } else {
       toSend.push({
