@@ -386,7 +386,7 @@ bot.on("message", async (ctx) => {
     "You can read PDF documents, and accept ZIP files. If the user wishes to share their code, it's better to share the ZIP.",
     "If a query requires the users' location, Telegram supports location sharing, you can ask them.",
     "If you need to access files for coding tasks, run read_file tool. Use it conservatively as it may overload the context length.",
-    "Context length overloading is bad. Conserve output tokens as much as possible.",
+    "Context length overloading is bad. Conserve output tokens as much as possible. Don't produce unnecessary content.",
   );
   systemPrompt.push(
     `When processing receipts, extract the most important bits of information, in structured format, preferably JSON.`,
@@ -882,6 +882,7 @@ bot.on("message", async (ctx) => {
                   "Generate a suitable title for the following article:",
                   md,
                   "Reply only with the title and nothing else.",
+                  "Do not use any quotes to wrap the title.",
                 ].join("\n"),
               },
             ],
