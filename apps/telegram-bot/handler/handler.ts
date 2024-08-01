@@ -76,11 +76,32 @@ bot.command("start", async (ctx) => {
   );
 });
 
+bot.command("balance", async (ctx) => {
+  let readUserId = ctx.from?.id;
+  if (ctx.match.length > 0) {
+    readUserId = parseInt(ctx.match);
+  }
+  if (!readUserId) return await ctx.reply("User ID not specified");
+
+  const user = await db.query.users.findFirst({
+    where: eq(schema.users.telegramId, readUserId),
+  });
+
+  if (!user) return await ctx.reply("User not found");
+
+  await ctx.replyFmt([
+    fmt`User ID: ${bold(user.id)}`,
+    "\n",
+    fmt`Tokens left: ${bold(user.credits)}`,
+  ]);
+});
+
 bot.command("usage", async (ctx) => {
   let readChatId = ctx.chatId;
   if (ctx.match.length > 0) {
     readChatId = parseInt(ctx.match);
   }
+
   const messages = await db.query.messages.findMany({
     where: eq(schema.messages.chatId, readChatId),
   });
@@ -946,6 +967,7 @@ bot.api.setMyCommands([
   { command: "usage", description: "Check usage and spending" },
   { command: "topup", description: "Get more tokens" },
   { command: "clear", description: "Clear conversation history" },
+  { command: "balance", description: "Check token balance" },
 ]);
 
 export { bot };
