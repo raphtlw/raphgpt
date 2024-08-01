@@ -889,43 +889,52 @@ bot.on("message", async (ctx) => {
       logger.error(e, "Unable to send MarkdownV2 message");
       logger.info("Uploading message to web");
 
-      // limit content length to fit context size for model
-      const enc = encoding_for_model("gpt-4o");
-      const tok = enc.encode(md);
-      const lim = tok.slice(0, 1024);
-      const txt = new TextDecoder().decode(enc.decode(lim));
-      enc.free();
+      let pageTitle: string | null = null;
 
-      const completion: OpenAI.Chat.ChatCompletion = await got
-        .post("https://openrouter.ai/api/v1/chat/completions", {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          },
-          json: {
-            model: "meta-llama/llama-3.1-8b-instruct:free",
-            messages: [
-              {
-                role: "system",
-                content: "You are a helpful assistant.",
-              },
-              {
-                role: "user",
-                content: [
-                  "Generate a suitable title for the following article:",
-                  txt,
-                  "Reply only with the title and nothing else.",
-                  "Do not use any quotes to wrap the title.",
-                ].join("\n"),
-              },
-            ],
-          },
-        })
-        .json();
+      try {
+        // limit content length to fit context size for model
+        const enc = encoding_for_model("gpt-4o");
+        const tok = enc.encode(md);
+        const lim = tok.slice(0, 1024);
+        const txt = new TextDecoder().decode(enc.decode(lim));
+        enc.free();
+
+        const completion: OpenAI.Chat.ChatCompletion = await got
+          .post("https://openrouter.ai/api/v1/chat/completions", {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            },
+            json: {
+              model: "meta-llama/llama-3.1-8b-instruct:free",
+              messages: [
+                {
+                  role: "system",
+                  content: "You are a helpful assistant.",
+                },
+                {
+                  role: "user",
+                  content: [
+                    "Generate a suitable title for the following article:",
+                    txt,
+                    "Reply only with the title and nothing else.",
+                    "Do not use any quotes to wrap the title.",
+                  ].join("\n"),
+                },
+              ],
+            },
+          })
+          .json();
+
+        pageTitle = completion.choices[0].message.content;
+      } catch (e) {
+        logger.error(e, "Error occurred while generating title");
+        pageTitle = "Bot Response";
+      }
 
       const insertResult = await db
         .insert(schema.fullResponses)
         .values({
-          title: completion.choices[0].message.content,
+          title: pageTitle,
           content: md,
         })
         .returning();
