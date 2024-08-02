@@ -301,39 +301,36 @@ bot.on("message", async (ctx) => {
   )
     return;
 
-  const user = await db.query.users
-    .findFirst({
-      where: eq(schema.users.telegramId, ctx.from.id),
-    })
-    .then(async (user) => {
-      if (!user) {
-        await ctx.replyFmt([
-          bold(
-            `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
-          ),
-          italic(`You can get more tokens from the store (/topup)`),
-        ]);
-        return await db
-          .insert(schema.users)
-          .values({
-            telegramId: ctx.from.id,
-            username: ctx.from.username,
-            firstName: ctx.from.first_name,
-            lastName: ctx.from.last_name,
-            credits: 69,
-          })
-          .onConflictDoUpdate({
-            target: [schema.users.telegramId],
-            set: {
-              username: ctx.from.username,
-              firstName: ctx.from.first_name,
-              lastName: ctx.from.last_name,
-            },
-          })
-          .returning()
-          .get();
-      }
-    });
+  let user = await db.query.users.findFirst({
+    where: eq(schema.users.telegramId, ctx.from.id),
+  });
+  if (!user) {
+    user = await db
+      .insert(schema.users)
+      .values({
+        telegramId: ctx.from.id,
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+        credits: 69,
+      })
+      .onConflictDoUpdate({
+        target: [schema.users.telegramId],
+        set: {
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        },
+      })
+      .returning()
+      .get();
+    await ctx.replyFmt([
+      bold(
+        `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
+      ),
+      italic(`You can get more tokens from the store (/topup)`),
+    ]);
+  }
   assert(user, "Unable to retrieve user");
 
   // Check if user has enough credits
