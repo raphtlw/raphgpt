@@ -35,17 +35,17 @@ const sendBuyCreditsInvoice = async (ctx: Context, amount: number) => {
     return await ctx.reply("Min. Amount is 100 tokens.");
   }
 
-  const value = Math.trunc(amount + calculateStripeFee(amount) / 100);
+  const cost = Math.trunc(amount + calculateStripeFee(amount));
 
   await ctx.replyWithInvoice(
     "Buy Credits (USD)",
     "Get tokens which will be used to run servers and support the project.",
-    JSON.stringify({ value, amount }),
+    JSON.stringify({ cost, amount }),
     "USD",
     [
       {
-        amount: value,
-        label: `Get ${amount} tokens for ${value}!`,
+        amount: cost,
+        label: `Get ${amount} tokens for ${cost}!`,
       },
     ],
     {
@@ -212,22 +212,26 @@ bot.command("topup", async (ctx) => {
   const args = ctx.match.trim();
 
   if (args.length === 0) {
-    const tokenOptions = [100, 150, 200, 300];
-    const priceSelection = tokenOptions.map((amount) =>
+    const buildSelection = (amount: number) =>
       InlineKeyboard.text(
-        `$${Math.trunc(amount + calculateStripeFee(amount)) / 100} (${amount} tokens)`,
+        `${amount} tokens ($${Math.trunc(amount + calculateStripeFee(amount)) / 100})`,
         JSON.stringify({ action: "deposit-amount-chosen", amount }),
-      ),
-    );
+      );
     return await ctx.reply(
       [
         "Payments are securely powered by Stripe.",
         "Please select the number of tokens you wish to purchase, or send a custom number (>100).",
       ].join("\n"),
       {
-        reply_markup: InlineKeyboard.from([priceSelection])
-          .row()
-          .text("Cancel ❌", JSON.stringify({ action: "cancel" })),
+        reply_markup: new InlineKeyboard()
+          .row(buildSelection(100), buildSelection(150))
+          .row(buildSelection(200), buildSelection(300))
+          .row(
+            InlineKeyboard.text(
+              "Cancel ❌",
+              JSON.stringify({ action: "cancel" }),
+            ),
+          ),
       },
     );
   }
