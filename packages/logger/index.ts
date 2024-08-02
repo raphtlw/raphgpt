@@ -28,7 +28,11 @@ export const createLogger = (service: string) => {
               password: process.env.GRAFANA_TOKEN!,
             },
 
-            labels: { application: "raphGPT", service },
+            labels: {
+              application: "raphGPT",
+              service,
+              environment: process.env.NODE_ENV!,
+            },
           },
         },
       ],

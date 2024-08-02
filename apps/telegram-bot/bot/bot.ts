@@ -23,7 +23,7 @@ bot.use(async (ctx, next) => {
 
   logger.debug(
     { before, after, duration: after - before },
-    "Time took to respond",
+    `Time taken to respond: ${after - before}ms (${(after - before) / 1000}s)`,
   );
 });
 bot.use(async (ctx, next) => {
