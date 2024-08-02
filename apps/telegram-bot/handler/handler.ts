@@ -315,12 +315,12 @@ bot.on("message", async (ctx) => {
       })
       .returning()
       .get();
-    await ctx.replyFmt([
-      bold(
+    await ctx.replyFmt(
+      fmt`${bold(
         `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
-      ),
-      italic(`You can get more tokens from the store (/topup)`),
-    ]);
+      )}
+${italic(`You can get more tokens from the store (/topup)`)}`,
+    );
   } else {
     user = await db
       .update(schema.users)
