@@ -1,7 +1,7 @@
 import { bold, fmt, italic, pre, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { hyper, hyperStore } from "@raphtlw/hyperfunc";
-import { db, schema } from "@repo/db";
+import { db, eq, schema } from "@repo/db";
 import { fileTypeFromStream } from "file-type";
 import fs from "fs";
 import got from "got";
@@ -314,19 +314,17 @@ export const mainFunctions = hyperStore<{ chatId: number; msgId: number }>({
   }),
 
   read_file: hyper({
-    description: "Reads a file at the given path",
+    description: "Access local file by ID",
     args: {
-      file_path: z
-        .string()
-        .describe("Full absolute path to file. Should begin with /"),
+      id: z.string().describe("File ID"),
     },
-    async handler({ file_path }) {
-      logger.info(`Reading file at ${file_path}`);
-      if (!fs.existsSync(file_path)) throw "File does not exist";
-      const contents = await fs.promises.readFile(file_path, {
-        encoding: "utf-8",
+    async handler({ id }) {
+      const file = await db.query.localFiles.findFirst({
+        where: eq(schema.localFiles.id, id),
       });
-      return contents;
+      if (!file) throw "File does not exist";
+      logger.info(`Loading file contents of ID ${file.id}`);
+      return file.content;
     },
   }),
 

@@ -410,7 +410,7 @@ bot.on("message", async (ctx) => {
     "You are running as a bot in Telegram, which has video messages, also known as telebubbles.",
     `Today is ${new Date().toLocaleString()}`,
     "Introduce some Gen Z lingo into your conversation.",
-    "You can read PDF documents, and accept ZIP files. If the user wishes to share their code, it's better to share the ZIP.",
+    "You can read PDF documents, and accept ZIP files. ZIP inputs will be unpacked and passed as message inputs.",
     "If a query requires the users' location, Telegram supports location sharing, you can ask them.",
     "If you need to access files for coding tasks, run read_file tool. Use it conservatively as it may overload the context length.",
     "Context length overloading is bad. Conserve output tokens as much as possible. Don't produce unnecessary content.",
@@ -569,6 +569,7 @@ bot.on("message", async (ctx) => {
         });
 
         const filePaths = await globby("**", {
+          absolute: true,
           ignore: [
             "__MACOSX",
             ".DS_Store",
@@ -587,13 +588,24 @@ bot.on("message", async (ctx) => {
           cwd: contentDir,
         });
 
-        logger.info(filePaths);
+        logger.info(filePaths, "Unzipped files");
+
+        // Write file contents to database
+        const localFiles = await db
+          .insert(schema.localFiles)
+          .values(
+            filePaths.map((p) => ({
+              path: p,
+              content: fs.readFileSync(p, "utf-8"),
+            })),
+          )
+          .returning();
 
         toSend.push({
           type: "text",
           text: [
-            `All filepaths of unzipped archive with prefix ${contentDir}:`,
-            ...filePaths,
+            `ZIP file processed. File IDs:`,
+            ...localFiles.map((f) => f.id),
           ].join("\n"),
         });
         toSend.push({

@@ -49,3 +49,9 @@ export const pendingPayments = sqliteTable("pending_payments", {
   created: real("created").$default(Date.now).notNull(),
   payload: text("payload").notNull(),
 });
+
+export const localFiles = sqliteTable("local_files", {
+  id: text("id").primaryKey().$default(createId),
+  path: text("path").notNull(),
+  content: text("content").notNull(),
+});
