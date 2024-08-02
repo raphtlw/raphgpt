@@ -1,7 +1,5 @@
-import os
-from io import BytesIO
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import filetype
 import requests
@@ -189,21 +187,6 @@ def main(context, procedure: str, payload: dict):
             mean = np.mean(magnitude)
 
             return mean
-
-        case "get-markdown-from-html":
-            import markdownify
-
-            md = markdownify(payload["html"])
-
-            return {"result": md}
-
-        case "limit-token-length":
-            import tiktoken
-
-            enc = tiktoken.encoding_for_model(payload["model"])
-            res = enc.encode(payload["string"])
-            capped = res[: payload["cap"]]
-            return enc.decode(capped)
 
         case "exec":
             from contextlib import redirect_stdout

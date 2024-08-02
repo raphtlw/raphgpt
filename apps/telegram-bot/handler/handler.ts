@@ -1,7 +1,7 @@
 import { Storage } from "@google-cloud/storage";
 import { bold, fmt, italic, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
-import { and, asc, db, desc, eq, schema, sql } from "@repo/db";
+import { db, desc, eq, schema, sql } from "@repo/db";
 import assert from "assert";
 import { FileTypeResult, fileTypeFromFile } from "file-type";
 import FormData from "form-data";
@@ -9,7 +9,7 @@ import fs from "fs";
 import { globby } from "globby";
 import { GoogleAuth } from "google-auth-library";
 import got from "got";
-import { InlineKeyboard } from "grammy";
+import { Context, InlineKeyboard } from "grammy";
 import { InputFile } from "grammy/types";
 import OpenAI from "openai";
 import os from "os";
@@ -26,6 +26,37 @@ import { runCommand } from "../bot/util.js";
 import { mainFunctions } from "../functions/main.js";
 import { callBeamEndpoint, callPython } from "../helpers/python.js";
 
+const calculateStripeFee = (amount: number) => {
+  return (amount / 100) * 3.4 + 50;
+};
+
+const sendBuyCreditsInvoice = async (ctx: Context, amount: number) => {
+  if (amount < 100) {
+    return await ctx.reply("Min. Amount is 100 tokens.");
+  }
+
+  const value = Math.trunc(amount + calculateStripeFee(amount) / 100);
+
+  await ctx.replyWithInvoice(
+    "Buy Credits (USD)",
+    "Get tokens which will be used to run servers and support the project.",
+    JSON.stringify({ value, amount }),
+    "USD",
+    [
+      {
+        amount: value,
+        label: `Get ${amount} tokens for ${value}!`,
+      },
+    ],
+    {
+      provider_token: process.env.TELEGRAM_PAYMENT_STRIPE_LIVE,
+      start_parameter: "",
+      photo_url:
+        "https://storage.cloud.google.com/raphgpt-static/duck-token.jpeg",
+    },
+  );
+};
+
 bot.on("callback_query:data", async (ctx) => {
   logger.debug(
     { payload: ctx.callbackQuery.data },
@@ -33,29 +64,7 @@ bot.on("callback_query:data", async (ctx) => {
   );
   const payload = JSON.parse(ctx.callbackQuery.data);
   if (payload.action === "deposit-amount-chosen") {
-    const amount: number = payload.amount;
-    const value = Math.trunc(amount + (amount / 100) * 3.4 + 50);
-
-    await ctx.replyWithInvoice(
-      "Buy Credits (USD)",
-      "Get tokens which will be used to run servers and support the project.",
-      JSON.stringify({ value, amount }),
-      "USD",
-      [
-        {
-          amount: value,
-          label: `Get ${amount} tokens for ${value}!`,
-        },
-      ],
-      {
-        provider_token: process.env.TELEGRAM_PAYMENT_STRIPE_LIVE,
-        start_parameter: "",
-        photo_url:
-          "https://storage.cloud.google.com/raphgpt-static/duck-token.jpeg",
-        photo_width: 1024,
-        photo_height: 1024,
-      },
-    );
+    await sendBuyCreditsInvoice(ctx, payload.amount);
   } else if (
     payload.action === "cancel" &&
     ctx.chatId &&
@@ -204,19 +213,20 @@ bot.command("topup", async (ctx) => {
   const args = ctx.match.trim();
 
   if (args.length === 0) {
-    const setPayload = (amount: number) =>
-      JSON.stringify({ action: "deposit-amount-chosen", amount });
+    const tokenOptions = [100, 150, 200, 300];
+    const priceSelection = tokenOptions.map((amount) =>
+      InlineKeyboard.text(
+        `$${Math.trunc(amount + calculateStripeFee(amount)) / 100} (${amount} tokens)`,
+        JSON.stringify({ action: "deposit-amount-chosen", amount }),
+      ),
+    );
     return await ctx.reply(
       [
         "Payments are securely powered by Stripe.",
         "Please select the number of tokens you wish to purchase, or send a custom number (>100).",
       ].join("\n"),
       {
-        reply_markup: new InlineKeyboard()
-          .text("$1 (100 tokens)", setPayload(100))
-          .text("$1.50 (150 tokens)", setPayload(150))
-          .text("$2 (200 tokens)", setPayload(200))
-          .text("$3 (300 tokens)", setPayload(300))
+        reply_markup: InlineKeyboard.from([priceSelection])
           .row()
           .text("Cancel ❌", JSON.stringify({ action: "cancel" })),
       },
@@ -230,33 +240,7 @@ bot.command("topup", async (ctx) => {
   }
 
   const amount = parseInt(args);
-
-  if (amount < 100) {
-    return await ctx.reply("Min. Amount is 100 tokens.");
-  }
-
-  const value = Math.trunc(amount + (amount / 100) * 3.4 + 50);
-
-  await ctx.replyWithInvoice(
-    "Buy Credits (USD)",
-    "Get tokens which will be used to run servers and support the project.",
-    JSON.stringify({ value, amount }),
-    "USD",
-    [
-      {
-        amount: value,
-        label: `Get ${amount} tokens for ${value}!`,
-      },
-    ],
-    {
-      provider_token: process.env.TELEGRAM_PAYMENT_STRIPE_LIVE,
-      start_parameter: "",
-      photo_url:
-        "https://storage.cloud.google.com/raphgpt-static/duck-token.jpeg",
-      photo_width: 1024,
-      photo_height: 1024,
-    },
-  );
+  await sendBuyCreditsInvoice(ctx, amount);
 });
 
 bot.on("pre_checkout_query", async (ctx) => {
@@ -317,28 +301,39 @@ bot.on("message", async (ctx) => {
   )
     return;
 
-  let user = await db.query.users.findFirst({
-    where: eq(schema.users.telegramId, ctx.from.id),
-  });
-  if (!user) {
-    user = await db
-      .insert(schema.users)
-      .values({
-        telegramId: ctx.from.id,
-        username: ctx.from.username,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        credits: 69,
-      })
-      .returning()
-      .get();
-    await ctx.replyFmt([
-      bold(
-        `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
-      ),
-      italic(`You can get more tokens from the store (/topup)`),
-    ]);
-  }
+  const user = await db.query.users
+    .findFirst({
+      where: eq(schema.users.telegramId, ctx.from.id),
+    })
+    .then(async (user) => {
+      if (!user) {
+        await ctx.replyFmt([
+          bold(
+            `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
+          ),
+          italic(`You can get more tokens from the store (/topup)`),
+        ]);
+        return await db
+          .insert(schema.users)
+          .values({
+            telegramId: ctx.from.id,
+            username: ctx.from.username,
+            firstName: ctx.from.first_name,
+            lastName: ctx.from.last_name,
+            credits: 69,
+          })
+          .onConflictDoUpdate({
+            target: [schema.users.telegramId],
+            set: {
+              username: ctx.from.username,
+              firstName: ctx.from.first_name,
+              lastName: ctx.from.last_name,
+            },
+          })
+          .returning()
+          .get();
+      }
+    });
   assert(user, "Unable to retrieve user");
 
   // Check if user has enough credits
@@ -414,7 +409,7 @@ bot.on("message", async (ctx) => {
     "You can read PDF documents, and accept ZIP files. ZIP inputs will be unpacked and passed as message inputs.",
     "If a query requires the users' location, Telegram supports location sharing, you can ask them.",
     "If you need to access files for coding tasks, run read_file tool. Use it conservatively as it may overload the context length.",
-    "Context length overloading is bad. Conserve output tokens as much as possible. Don't produce unnecessary content.",
+    "Conserve output tokens as much as possible. Don't produce unnecessary content.",
   );
   systemPrompt.push(
     `When processing receipts, extract the most important bits of information, in structured format, preferably JSON.`,
@@ -661,41 +656,52 @@ bot.on("message", async (ctx) => {
     },
   ];
 
-  let messageChunks: OpenAI.Chat.Completions.ChatCompletionMessageParam[][] =
-    [];
-
-  let allMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-  if (ctx.msg.message_thread_id) {
-    allMessages = await db.query.messages
-      .findMany({
-        where: and(
-          eq(schema.messages.chatId, ctx.chatId),
-          eq(schema.messages.threadId, ctx.msg.message_thread_id),
+  const history = await db.query.messages
+    .findMany({
+      where: (messages, { eq, and }) => {
+        if (ctx.msg.message_thread_id) {
+          return and(
+            eq(messages.chatId, ctx.chatId),
+            eq(messages.threadId, ctx.msg.message_thread_id),
+          );
+        } else {
+          return eq(messages.chatId, ctx.chatId);
+        }
+      },
+      orderBy: (messages, { asc }) => [
+        asc(messages.created),
+        asc(messages.turnId),
+      ],
+    })
+    .then((results) => {
+      let turns: (typeof schema.messages.$inferSelect)[][] = [];
+      for (const result of results) {
+        const prevTurnIdx = turns.findIndex(
+          (t) => t[0].turnId === result.turnId,
+        );
+        if (prevTurnIdx > -1) {
+          turns[prevTurnIdx].push(result);
+        } else {
+          turns.push([result]);
+        }
+      }
+      return turns;
+    })
+    .then((turns) =>
+      turns.map((t) =>
+        t.map(
+          (m) =>
+            JSON.parse(
+              m.content,
+            ) as OpenAI.Chat.Completions.ChatCompletionMessageParam,
         ),
-        orderBy: asc(schema.messages.created),
-      })
-      .then((a) => a.map((m) => JSON.parse(m.content)));
-  } else {
-    allMessages = await db.query.messages
-      .findMany({
-        where: eq(schema.messages.chatId, ctx.chatId),
-        orderBy: asc(schema.messages.created),
-      })
-      .then((a) => a.map((m) => JSON.parse(m.content)));
-  }
+      ),
+    );
 
-  let chunk: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-  for (const message of allMessages) {
-    chunk.push(message);
-    if (message.role === "assistant") {
-      messageChunks.push([...chunk]);
-      chunk = [];
-    }
-  }
-  logger.debug({ messageChunks }, "Message Chunking Output");
+  logger.debug({ history }, "Message History");
 
-  // Use last 8 chunks as history
-  messages.push(...messageChunks.slice(-MESSAGE_CHUNKED_HISTORY_SIZE).flat(2));
+  // Use last x turns as history
+  messages.push(...history.slice(-MESSAGE_CHUNKED_HISTORY_SIZE).flat(2));
 
   messages.push({
     role: "system",
@@ -704,43 +710,52 @@ bot.on("message", async (ctx) => {
 
   logger.debug({ messages }, "OpenAI messages");
 
-  const turnTimestamps: number[] = [];
-
-  const turn: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "user", content: toSend },
+  const turnId = createId();
+  const turn: {
+    message: OpenAI.Chat.Completions.ChatCompletionMessageParam;
+    timestamp: number;
+  }[] = [
+    {
+      message: { role: "user", content: toSend },
+      timestamp: Date.now(),
+    },
   ];
 
-  let lastResponse = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [messages, turn].flat(),
-    tools: mainFunctions.asTools(),
-  });
-  assert(lastResponse.usage, "Could not get usage details");
-  await db
-    .insert(schema.usage)
-    .values({
-      userId: user.id,
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  const runModel = async () => {
+    logger.debug({ messages, turn }, "Running model");
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o",
-      inputTokens: lastResponse.usage.prompt_tokens,
-      outputTokens: lastResponse.usage.completion_tokens,
-    })
-    .onConflictDoUpdate({
-      target: [schema.usage.userId, schema.usage.model],
-      set: {
-        inputTokens: sql`${schema.usage.inputTokens} + ${lastResponse.usage.prompt_tokens}`,
-        outputTokens: sql`${schema.usage.outputTokens} + ${lastResponse.usage.completion_tokens}`,
-      },
+      messages: [messages, turn.map((t) => t.message)].flat(),
+      tools: mainFunctions.asTools(),
     });
 
-  // Save response
-  turn.push(lastResponse.choices[0].message);
-  turnTimestamps.push(Date.now());
+    // Track usage
+    assert(completion.usage, "Could not get usage details");
+    inputTokens += completion.usage.prompt_tokens;
+    outputTokens += completion.usage.completion_tokens;
+
+    // Save response
+    turn.push({
+      message: completion.choices[0].message,
+      timestamp: Date.now(),
+    });
+
+    return completion;
+  };
+
+  let lastResponse = await runModel();
 
   while (lastResponse.choices[0].message.tool_calls) {
     // Inform user of current function run (text from model)
     if (lastResponse.choices[0].message.content) {
       const sent = await ctx.reply(lastResponse.choices[0].message.content);
-      logger.debug(sent, "Message sent");
+      logger.debug(
+        { sent, content: lastResponse.choices[0].message.content },
+        "Message sent",
+      );
     }
 
     // Run function calls
@@ -754,58 +769,42 @@ bot.on("message", async (ctx) => {
           result = JSON.stringify(result);
         }
         turn.push({
-          tool_call_id: toolCall.id,
-          role: "tool",
-          content: result,
+          message: {
+            tool_call_id: toolCall.id,
+            role: "tool",
+            content: result,
+          },
+          timestamp: Date.now(),
         });
-        turnTimestamps.push(Date.now());
         logger.info({ result, function: toolCall.function }, "Function called");
       } catch (e) {
         turn.push({
-          tool_call_id: toolCall.id,
-          role: "tool",
-          content: `Error: ${JSON.stringify(e)}`,
+          message: {
+            tool_call_id: toolCall.id,
+            role: "tool",
+            content: `Error: ${JSON.stringify(e)}`,
+          },
+          timestamp: Date.now(),
         });
-        turnTimestamps.push(Date.now());
         logger.info(e, "Error calling function");
       }
     }
 
     // Get a second response from the model where it can see the function response
-    lastResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages,
-    });
-    assert(lastResponse.usage, "Could not get usage details");
-    await db
-      .insert(schema.usage)
-      .values({
-        userId: user.id,
-        model: "gpt-4o",
-        inputTokens: lastResponse.usage.prompt_tokens,
-        outputTokens: lastResponse.usage.completion_tokens,
-      })
-      .onConflictDoUpdate({
-        target: [schema.usage.userId, schema.usage.model],
-        set: {
-          inputTokens: sql`${schema.usage.inputTokens} + ${lastResponse.usage.prompt_tokens}`,
-          outputTokens: sql`${schema.usage.outputTokens} + ${lastResponse.usage.completion_tokens}`,
-        },
-      });
-    turn.push(lastResponse.choices[0].message);
-    turnTimestamps.push(Date.now());
+    lastResponse = await runModel();
   }
 
   logger.debug({ turn }, "Current conversation turn");
 
-  for (let i = 0; i < turn.length; i++) {
-    await db.insert(schema.messages).values({
+  await db.insert(schema.messages).values(
+    turn.map((t) => ({
+      turnId,
       chatId: ctx.chatId,
       threadId: ctx.msg.message_thread_id ?? ctx.msgId,
-      content: JSON.stringify(turn[i]),
-      created: turnTimestamps[i],
-    });
-  }
+      content: JSON.stringify(t.message),
+      created: t.timestamp,
+    })),
+  );
 
   // Send final response to user
   if (lastResponse.choices[0].message.content) {
@@ -965,31 +964,42 @@ bot.on("message", async (ctx) => {
         },
       });
 
-      // Calculate usage
-      const usages = await db.query.usage.findMany({
-        where: eq(schema.usage.userId, user.id),
-      });
+      // Track usage
+      await db
+        .insert(schema.usage)
+        .values({
+          userId: user.id,
+          model: "gpt-4o",
+          inputTokens,
+          outputTokens,
+        })
+        .onConflictDoUpdate({
+          target: [schema.usage.userId, schema.usage.model],
+          set: {
+            inputTokens: sql`${schema.usage.inputTokens} + ${inputTokens}`,
+            outputTokens: sql`${schema.usage.outputTokens} + ${outputTokens}`,
+          },
+        });
 
       let cost = 0;
 
-      for (const usage of usages) {
-        cost += usage.inputTokens * (5 / 1_000_000);
-        cost += usage.outputTokens * (15 / 1_000_000);
-      }
+      cost += inputTokens * (5 / 1_000_000);
+      cost += outputTokens * (15 / 1_000_000);
 
       // 3% of fees
       cost += (cost / 100) * 3;
 
-      logger.debug({ usages, cost });
+      cost = cost * 100; // Store value without 2 d.p.
 
+      // Subtract credits from user
       await db
         .update(schema.users)
         .set({
-          credits: sql`${schema.users.credits} - ${cost * 100}`,
+          credits: sql`${schema.users.credits} - ${cost}`,
         })
         .where(eq(schema.users.telegramId, ctx.from.id));
 
-      logger.debug("Subtracted credits");
+      logger.debug({ cost }, "Deducted credits");
     }
   }
 });

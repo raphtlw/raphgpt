@@ -2,10 +2,7 @@ opencv-python
 ffmpeg-python
 imutils
 numpy
-python-telegram-bot
-tiktoken
 cuid2
 faster-whisper
-markdownify
 requests
 filetype
