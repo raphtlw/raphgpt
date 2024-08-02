@@ -323,11 +323,15 @@ bot.on("message", async (ctx) => {
       italic(`You can get more tokens from the store (/topup)`),
     ]);
   } else {
-    await db.update(schema.users).set({
-      username: ctx.from.username,
-      firstName: ctx.from.first_name,
-      lastName: ctx.from.last_name,
-    });
+    user = await db
+      .update(schema.users)
+      .set({
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+      })
+      .returning()
+      .get();
   }
   assert(user, "Unable to retrieve user");
 
