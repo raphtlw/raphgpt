@@ -99,11 +99,10 @@ bot.command("balance", async (ctx) => {
 
   if (!user) return await ctx.reply("User not found");
 
-  await ctx.replyFmt([
-    fmt`User ID: ${bold(user.id)}`,
-    "\n",
-    fmt`Tokens left: ${bold(user.credits)}`,
-  ]);
+  await ctx.replyFmt(
+    fmt`User ID: ${bold(`${user.id}`)}
+Tokens left: ${bold(`${user.credits}`)}`,
+  );
 });
 
 bot.command("usage", async (ctx) => {
