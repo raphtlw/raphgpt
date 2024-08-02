@@ -582,8 +582,7 @@ bot.on("message", async (ctx) => {
             "dart_project",
           ].map((p) => `**/${p}/**`),
           expandDirectories: true,
-          onlyDirectories: false,
-          onlyFiles: false,
+          onlyFiles: true,
           dot: true,
           cwd: contentDir,
         });
