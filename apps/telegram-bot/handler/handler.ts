@@ -314,14 +314,6 @@ bot.on("message", async (ctx) => {
         lastName: ctx.from.last_name,
         credits: 69,
       })
-      .onConflictDoUpdate({
-        target: [schema.users.telegramId],
-        set: {
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        },
-      })
       .returning()
       .get();
     await ctx.replyFmt([
@@ -330,6 +322,12 @@ bot.on("message", async (ctx) => {
       ),
       italic(`You can get more tokens from the store (/topup)`),
     ]);
+  } else {
+    await db.update(schema.users).set({
+      username: ctx.from.username,
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+    });
   }
   assert(user, "Unable to retrieve user");
 
