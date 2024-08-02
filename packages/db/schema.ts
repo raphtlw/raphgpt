@@ -18,7 +18,7 @@ export const users = sqliteTable("users", {
 
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey().$default(createId),
-  turnId: text("turn_id").notNull(),
+  turnId: integer("turn_id").notNull(),
   chatId: integer("chat_id").notNull(),
   threadId: integer("thread_id").notNull(),
   content: text("content").notNull(),

@@ -709,7 +709,6 @@ bot.on("message", async (ctx) => {
 
   logger.debug({ messages }, "OpenAI messages");
 
-  const turnId = createId();
   const turn: {
     message: OpenAI.Chat.Completions.ChatCompletionMessageParam;
     timestamp: number;
@@ -795,9 +794,17 @@ bot.on("message", async (ctx) => {
 
   logger.debug({ turn }, "Current conversation turn");
 
+  const prevTurnMessage = await db
+    .select()
+    .from(schema.messages)
+    .orderBy(desc(schema.messages.turnId))
+    .limit(1)
+    .get();
+  assert(prevTurnMessage, "Unable to get previous turn");
+
   await db.insert(schema.messages).values(
     turn.map((t) => ({
-      turnId,
+      turnId: prevTurnMessage.turnId + 1,
       chatId: ctx.chatId,
       threadId: ctx.msg.message_thread_id ?? ctx.msgId,
       content: JSON.stringify(t.message),
