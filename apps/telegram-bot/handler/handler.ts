@@ -601,6 +601,8 @@ bot.on("message", async (ctx) => {
           )
           .returning();
 
+        await fs.promises.rm(contentDir, { recursive: true, force: true });
+
         toSend.push({
           type: "text",
           text: [
