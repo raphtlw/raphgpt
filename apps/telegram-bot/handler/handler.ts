@@ -19,6 +19,7 @@ import sharp from "sharp";
 import telegramifyMarkdown from "telegramify-markdown";
 import { encoding_for_model } from "tiktoken";
 import { bot } from "../bot/bot.js";
+import { MESSAGE_CHUNKED_HISTORY_SIZE } from "../bot/constants.js";
 import logger from "../bot/logger.js";
 import { telegram } from "../bot/telegram.js";
 import { runCommand } from "../bot/util.js";
@@ -660,45 +661,41 @@ bot.on("message", async (ctx) => {
     },
   ];
 
+  let messageChunks: OpenAI.Chat.Completions.ChatCompletionMessageParam[][] =
+    [];
+
+  let allMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
   if (ctx.msg.message_thread_id) {
-    // If message is in a thread, use all messages in that thread
-    logger.info(ctx.msg.message_thread_id, "Message in thread");
-
-    const messagesFromThread = await db.query.messages.findMany({
-      where: and(
-        eq(schema.messages.chatId, ctx.chatId),
-        eq(schema.messages.threadId, ctx.msg.message_thread_id),
-      ),
-      orderBy: asc(schema.messages.created),
-    });
-
-    messages.push(
-      ...messagesFromThread.map(({ content }) => JSON.parse(content)),
-    );
+    allMessages = await db.query.messages
+      .findMany({
+        where: and(
+          eq(schema.messages.chatId, ctx.chatId),
+          eq(schema.messages.threadId, ctx.msg.message_thread_id),
+        ),
+        orderBy: asc(schema.messages.created),
+      })
+      .then((a) => a.map((m) => JSON.parse(m.content)));
   } else {
-    const messagesFromChat = await db.query.messages.findMany({
-      where: eq(schema.messages.chatId, ctx.chatId),
-      orderBy: asc(schema.messages.created),
-    });
-
-    // Chunk messages into user + assistant
-    const allMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      messagesFromChat.map(({ content }) => JSON.parse(content));
-    const messageChunks: OpenAI.Chat.Completions.ChatCompletionMessageParam[][] =
-      [];
-    let chunk: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-    for (const message of allMessages) {
-      chunk.push(message);
-      if (message.role === "assistant") {
-        messageChunks.push([...chunk]);
-        chunk = [];
-      }
-    }
-    logger.debug({ messageChunks }, "Message Chunking Output");
-
-    // Use last 8 chunks as history
-    messages.push(...messageChunks.slice(-8).flat(2));
+    allMessages = await db.query.messages
+      .findMany({
+        where: eq(schema.messages.chatId, ctx.chatId),
+        orderBy: asc(schema.messages.created),
+      })
+      .then((a) => a.map((m) => JSON.parse(m.content)));
   }
+
+  let chunk: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+  for (const message of allMessages) {
+    chunk.push(message);
+    if (message.role === "assistant") {
+      messageChunks.push([...chunk]);
+      chunk = [];
+    }
+  }
+  logger.debug({ messageChunks }, "Message Chunking Output");
+
+  // Use last 8 chunks as history
+  messages.push(...messageChunks.slice(-MESSAGE_CHUNKED_HISTORY_SIZE).flat(2));
 
   messages.push({
     role: "system",

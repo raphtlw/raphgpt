@@ -1,0 +1,1 @@
+export const MESSAGE_CHUNKED_HISTORY_SIZE = 8;
