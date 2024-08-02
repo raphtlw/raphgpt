@@ -799,11 +799,14 @@ bot.on("message", async (ctx) => {
     .orderBy(desc(schema.messages.turnId))
     .limit(1)
     .get();
-  assert(prevTurnMessage, "Unable to get previous turn");
+  let turnId = 0;
+  if (prevTurnMessage) {
+    turnId = prevTurnMessage.turnId + 1;
+  }
 
   await db.insert(schema.messages).values(
     turn.map((t) => ({
-      turnId: prevTurnMessage.turnId + 1,
+      turnId,
       chatId: ctx.chatId,
       threadId: ctx.msg.message_thread_id ?? ctx.msgId,
       content: JSON.stringify(t.message),
