@@ -45,14 +45,14 @@ const sendBuyCreditsInvoice = async (ctx: Context, amount: number) => {
     [
       {
         amount: cost,
-        label: `Get ${amount} tokens for ${cost}!`,
+        label: `Get ${amount} tokens for $${cost}!`,
       },
     ],
     {
       provider_token: process.env.TELEGRAM_PAYMENT_STRIPE_LIVE,
       start_parameter: "",
       photo_url:
-        "https://storage.cloud.google.com/raphgpt-static/duck-token.jpeg",
+        "https://storage.googleapis.com/raphgpt-static/duck-token.jpeg",
     },
   );
 };
