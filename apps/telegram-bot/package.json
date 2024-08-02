@@ -23,6 +23,7 @@
     "@raphtlw/hyperfunc": "^0.0.7",
     "@repo/db": "workspace:*",
     "@repo/logger": "workspace:*",
+    "fastify": "^4.28.1",
     "file-type": "^19.3.0",
     "form-data": "^4.0.0",
     "globby": "^14.0.2",

@@ -16,6 +16,20 @@ bot.use(
     return [chat, user];
   }),
 );
+bot.use(async (ctx, next) => {
+  const before = Date.now();
+  await next();
+  const after = Date.now();
+
+  logger.debug(
+    { before, after, duration: after - before },
+    "Time took to respond",
+  );
+});
+bot.use(async (ctx, next) => {
+  logger.debug(ctx.update, "Update Received");
+  await next();
+});
 
 bot.catch(async ({ error, ctx, message }) => {
   logger.error(error, `Error while handling update ${ctx.update.update_id}`);

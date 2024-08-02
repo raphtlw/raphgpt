@@ -1,4 +1,6 @@
 import { run } from "@grammyjs/runner";
+import Fastify from "fastify";
+import { webhookCallback } from "grammy";
 import logger from "./bot/logger.js";
 import { bot } from "./handler/handler.js";
 import { BROWSER } from "./helpers/browser.js";
@@ -27,14 +29,18 @@ process.on("SIGTERM", async (err) => {
   process.exit(1);
 });
 
-bot.on("message", async (ctx) => {
-  ctx.reply("it works");
-});
+if (process.env.NODE_ENV === "production") {
+  const handle = run(bot);
 
-const handle = run(bot);
+  await handle.task();
 
-await handle.task();
+  logger.info("Bot done processing!");
 
-logger.info("Bot done processing!");
+  await handle.stop();
+} else {
+  const fastify = Fastify({
+    logger,
+  });
 
-await handle.stop();
+  fastify.post("/", webhookCallback(bot, "fastify"));
+}
