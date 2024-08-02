@@ -329,6 +329,7 @@ bot.on("message", async (ctx) => {
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
       })
+      .where(eq(schema.users.telegramId, ctx.from.id))
       .returning()
       .get();
   }
