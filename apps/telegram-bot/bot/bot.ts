@@ -17,17 +17,16 @@ bot.use(
   }),
 );
 
-bot.catch((err) => {
-  const ctx = err.ctx;
-  logger.error(err, `Error while handling update ${ctx.update.update_id}`);
-  const e = err.error;
-  if (e instanceof GrammyError) {
-    logger.error(`Error in request: ${e.description}`);
-  } else if (e instanceof HttpError) {
-    logger.error(e, `Could not contact Telegram`);
+bot.catch(async ({ error, ctx, message }) => {
+  logger.error(error, `Error while handling update ${ctx.update.update_id}`);
+  if (error instanceof GrammyError) {
+    logger.error(`Error in request: ${error.description}`);
+  } else if (error instanceof HttpError) {
+    logger.error(error, `Could not contact Telegram`);
   } else {
-    logger.error(e, "Unknown error");
+    logger.error(error, "Unknown error");
   }
+  await ctx.reply(`Error: ${message}`);
 });
 
 export { bot };
