@@ -42,7 +42,6 @@ WORKDIR /app
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm pnpm install --frozen-lockfile
 RUN pnpm build
 
-ENTRYPOINT [ "/usr/bin/dumb-init", "--" ]
 CMD [ "infisical", "run", \
       "--projectId", "6fd5cbbf-ddf0-47b5-938b-ff752c3c6889", \
       "--env", "prod", \
