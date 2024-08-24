@@ -15,6 +15,7 @@ import logger from "../bot/logger.js";
 import { telegram } from "../bot/telegram.js";
 import { db, tables } from "../db/db.js";
 import { BROWSER } from "../helpers/browser.js";
+import { getEnv } from "../helpers/env.js";
 import { openrouter } from "../helpers/openrouter.js";
 import { runCommand } from "../helpers/shell.js";
 
@@ -285,7 +286,7 @@ export const mainFunctions = (chatId: number, msgId: number) => {
         const res = await got
           .post("https://places.googleapis.com/v1/places:searchText", {
             headers: {
-              "X-Goog-Api-Key": process.env.GOOGLE_MAPS_API_KEY,
+              "X-Goog-Api-Key": getEnv("GOOGLE_MAPS_API_KEY"),
               "X-Goog-FieldMask":
                 "places.displayName,places.formattedAddress,places.priceLevel,places.googleMapsUri,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions",
             },
@@ -403,7 +404,47 @@ export const mainFunctions = (chatId: number, msgId: number) => {
           })
           .returning();
         const published = insertResult[0];
-        return `Content published at ${process.env.WEB_SITE_URL}/telegram/${published.id}`;
+        return `Content published at ${getEnv("WEB_SITE_URL")}/telegram/${published.id}`;
+      },
+    }),
+
+    get_weather: tool({
+      description: "Get weather information",
+      parameters: z.object({
+        lat: z.number().describe("Latitude, decimal (-90; 90)"),
+        lon: z.string().describe("Longitude, decimal (-180; 180)"),
+        kinds: z.array(
+          z.enum(["current", "minutely", "hourly", "daily", "alerts"]),
+        ),
+        units: z.enum(["standard", "metric", "imperial"]),
+      }),
+      async execute({ lat, lon, kinds, units }) {
+        const excludeOpts = [
+          "current",
+          "minutely",
+          "hourly",
+          "daily",
+          "alerts",
+        ];
+
+        const res = await got(
+          "https://api.openweathermap.org/data/3.0/onecall",
+          {
+            searchParams: {
+              lat,
+              lon,
+              exclude: excludeOpts
+                .filter((o) => kinds.indexOf(o as any) === -1)
+                .join(","),
+              units,
+              appid: getEnv("OPENWEATHER_API_KEY"),
+            },
+          },
+        ).json();
+
+        logger.debug(res, "OpenWeather API response");
+
+        return res;
       },
     }),
   };
