@@ -1,6 +1,7 @@
 import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
 import { sequentialize } from "@grammyjs/runner";
 import { Bot, Context, GrammyError, HttpError } from "grammy";
+import { z } from "zod";
 import { getEnv } from "../helpers/env.js";
 import logger from "./logger.js";
 
@@ -32,10 +33,22 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
+// Typing indicator
 let typingIndicatorInterval: NodeJS.Timeout;
 
-// Typing indicator
 bot.use(async (ctx, next) => {
+  if (!ctx.msg) return;
+  if (!ctx.msg.from) return;
+
+  if (
+    !(
+      ctx.hasChatType("private") ||
+      (ctx.msg.from.id === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()) &&
+        ctx.msg.text?.startsWith("-bot "))
+    )
+  )
+    return;
+
   await ctx.replyWithChatAction("typing", {
     message_thread_id: ctx.msg?.message_thread_id,
   });
