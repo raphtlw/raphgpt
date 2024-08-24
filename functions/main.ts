@@ -283,6 +283,8 @@ export const mainFunctions = (chatId: number, msgId: number) => {
           .optional(),
       }),
       async execute({ text_query, lat, lon }) {
+        logger.debug({ text_query, lat, lon });
+
         const res = await got
           .post("https://places.googleapis.com/v1/places:searchText", {
             headers: {
@@ -409,33 +411,19 @@ export const mainFunctions = (chatId: number, msgId: number) => {
     }),
 
     get_weather: tool({
-      description: "Get weather information",
+      description: "Search weather information",
       parameters: z.object({
         lat: z.number().describe("Latitude, decimal (-90; 90)"),
         lon: z.string().describe("Longitude, decimal (-180; 180)"),
-        kinds: z.array(
-          z.enum(["current", "minutely", "hourly", "daily", "alerts"]),
-        ),
         units: z.enum(["standard", "metric", "imperial"]),
       }),
-      async execute({ lat, lon, kinds, units }) {
-        const excludeOpts = [
-          "current",
-          "minutely",
-          "hourly",
-          "daily",
-          "alerts",
-        ];
-
+      async execute({ lat, lon, units }) {
         const res = await got(
           "https://api.openweathermap.org/data/3.0/onecall",
           {
             searchParams: {
               lat,
               lon,
-              exclude: excludeOpts
-                .filter((o) => kinds.indexOf(o as any) === -1)
-                .join(","),
               units,
               appid: getEnv("OPENWEATHER_API_KEY"),
             },

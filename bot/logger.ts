@@ -10,7 +10,8 @@ export default pino(
     level: "trace",
     targets: [
       ...(PRODUCTION
-        ? [
+        ? []
+        : [
             {
               level: "trace",
               target: "pino-pretty",
@@ -18,8 +19,7 @@ export default pino(
                 colorize: true,
               },
             },
-          ]
-        : []),
+          ]),
       {
         level: "trace",
         target: "pino-loki",

@@ -373,16 +373,18 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const fileType = await fileTypeFromFile(localPath);
     logger.info(fileType, "Document file type");
 
-    // Rename file with better extension
-    if (fileType) {
-      await fs.promises.rename(localPath, `${localPath}.${fileType.ext}`);
-    }
-
     file = {
       remoteUrl: fileUrl,
       localPath,
       fileType: fileType ?? null,
     };
+
+    // Rename file with better extension
+    if (fileType) {
+      const localPathWithExt = `${localPath}.${fileType.ext}`;
+      await fs.promises.rename(localPath, localPathWithExt);
+      file.localPath = localPathWithExt;
+    }
   }
 
   if (ctx.msg.text?.startsWith("-bot ")) {
