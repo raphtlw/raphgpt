@@ -442,7 +442,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .toBuffer();
     toSend.push({
       type: "image",
-      image,
+      image: image.toString("base64"),
     });
   }
   if (file && ctx.msg.document) {
@@ -590,7 +590,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .toBuffer();
     toSend.push({
       type: "image",
-      image,
+      image: image.toString("base64"),
     });
   }
   if (ctx.msg.caption) {
