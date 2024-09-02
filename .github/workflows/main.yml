@@ -34,3 +34,8 @@ jobs:
           tags: ghcr.io/raphtlw/raphgpt:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Trigger container update
+        env:
+          TOKEN: ${{ secrets.WATCHTOWER_HTTP_API_TOKEN }}
+        run: |
+          curl -H "Authorization: Bearer $TOKEN" https://raphgpt-trigger-update.raphtlw.com/v1/update
