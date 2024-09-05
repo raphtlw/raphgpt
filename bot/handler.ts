@@ -656,10 +656,10 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
   logger.debug({ messages }, "OpenAI messages");
 
-  let inputTokens = 0;
-  let outputTokens = 0;
+  // let inputTokens = 0;
+  // let outputTokens = 0;
 
-  const { text, responseMessages } = await generateText({
+  const { text, responseMessages, usage } = await generateText({
     model: openai("gpt-4o"),
     tools: mainFunctions(ctx.chatId, ctx.msgId),
     system: await buildPrompt("system", {
@@ -838,21 +838,21 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .values({
         userId: user.id,
         model: "gpt-4o",
-        inputTokens,
-        outputTokens,
+        inputTokens: usage.promptTokens,
+        outputTokens: usage.completionTokens,
       })
       .onConflictDoUpdate({
         target: [tables.usage.userId, tables.usage.model],
         set: {
-          inputTokens: sql`${tables.usage.inputTokens} + ${inputTokens}`,
-          outputTokens: sql`${tables.usage.outputTokens} + ${outputTokens}`,
+          inputTokens: sql`${tables.usage.inputTokens} + ${usage.promptTokens}`,
+          outputTokens: sql`${tables.usage.outputTokens} + ${usage.completionTokens}`,
         },
       });
 
     let cost = 0;
 
-    cost += inputTokens * (5 / 1_000_000);
-    cost += outputTokens * (15 / 1_000_000);
+    cost += usage.promptTokens * (5 / 1_000_000);
+    cost += usage.completionTokens * (15 / 1_000_000);
 
     // 3% of fees
     cost += (cost / 100) * 3;
