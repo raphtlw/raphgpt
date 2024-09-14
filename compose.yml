@@ -4,8 +4,17 @@ services:
     restart: always
     volumes:
       - appdata:${DATA_DIR}
-    env_file:
-      - .env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - PYTHON_URL=${PYTHON_URL}
+      - INFISICAL_TOKEN=${INFISICAL_TOKEN}
+      - MESSAGE_CHUNKED_HISTORY_SIZE=${MESSAGE_CHUNKED_HISTORY_SIZE}
+      - DATA_DIR=${DATA_DIR}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
@@ -14,8 +23,17 @@ services:
     restart: always
     volumes:
       - appdata:${DATA_DIR}
-    env_file:
-      - .env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - PYTHON_URL=${PYTHON_URL}
+      - INFISICAL_TOKEN=${INFISICAL_TOKEN}
+      - MESSAGE_CHUNKED_HISTORY_SIZE=${MESSAGE_CHUNKED_HISTORY_SIZE}
+      - DATA_DIR=${DATA_DIR}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
@@ -45,7 +63,7 @@ services:
   gotenberg:
     image: gotenberg/gotenberg:8
     ports:
-      - "60463:3000"
+      - 60463:3000
 
   watchtower:
     image: containrrr/watchtower
