@@ -6,15 +6,18 @@ services:
       - appdata:${DATA_DIR}
     env_file:
       - .env
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
   python:
     image: ghcr.io/raphtlw/raphgpt-python:latest
     restart: always
     volumes:
       - appdata:${DATA_DIR}
-    environment:
-      - DATA_DIR=${DATA_DIR}
-      - INFISICAL_TOKEN=${INFISICAL_TOKEN}
+    env_file:
+      - .env
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
   postgres:
     image: postgres
@@ -43,6 +46,18 @@ services:
     image: gotenberg/gotenberg:8
     ports:
       - "60463:3000"
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --debug --http-api-update --label-enable
+    environment:
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    ports:
+      - 8084:8080
 
 volumes:
   appdata:
