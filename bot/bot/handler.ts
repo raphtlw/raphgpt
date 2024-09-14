@@ -1,10 +1,11 @@
 import { openai } from "@ai-sdk/openai";
-import { bold, fmt, italic, underline } from "@grammyjs/parse-mode";
+import { bold, fmt, italic } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { CoreMessage, generateText, UserContent } from "ai";
 import assert from "assert";
 import { desc, eq, sql } from "drizzle-orm";
-import { fileTypeFromFile, FileTypeResult } from "file-type";
+import { fileTypeFromFile } from "file-type";
+import FormData from "form-data";
 import fs from "fs";
 import { globby } from "globby";
 import got from "got";
@@ -13,21 +14,24 @@ import OpenAI from "openai";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
-import { pipeline as streamPipeline } from "stream/promises";
 import telegramifyMarkdown from "telegramify-markdown";
 import { encoding_for_model } from "tiktoken";
+import { inspect } from "util";
 import { z } from "zod";
 import logger from "../bot/logger.js";
-import { telegram } from "../bot/telegram.js";
+import { downloadFile, telegram } from "../bot/telegram.js";
 import { db, tables } from "../db/db.js";
 import { mainFunctions } from "../functions/main.js";
 import { getEnv } from "../helpers/env.js";
 import { openrouter } from "../helpers/openrouter.js";
 import { buildPrompt } from "../helpers/prompts.js";
-import { callBeamEndpoint, callPython } from "../helpers/python.js";
+import { callPython } from "../helpers/python.js";
+import { runModel } from "../helpers/replicate.js";
 import { runCommand } from "../helpers/shell.js";
+import { superjson } from "../helpers/superjson.js";
+import { kv } from "../kv/redis.js";
 import { bot } from "./bot.js";
-import { LOCAL_FILES_DIR } from "./constants.js";
+import { DATA_DIR, LOCAL_FILES_DIR, OPENROUTER_FREE } from "./constants.js";
 
 const calculateStripeFee = (amount: number) => {
   return (amount / 100) * 3.4 + 50;
@@ -108,89 +112,89 @@ Tokens left: ${bold(`${user.credits}`)}`,
   );
 });
 
-bot.command("usage", async (ctx) => {
-  let readChatId = ctx.chatId;
-  if (ctx.match.length > 0) {
-    readChatId = parseInt(ctx.match);
-  }
+// bot.command("usage", async (ctx) => {
+//   let readChatId = ctx.chatId;
+//   if (ctx.match.length > 0) {
+//     readChatId = parseInt(ctx.match);
+//   }
 
-  const messages = await db.query.messages.findMany({
-    where: eq(tables.messages.chatId, readChatId),
-  });
+//   const messages = await db.query.messages.findMany({
+//     where: eq(tables.messages.chatId, readChatId),
+//   });
 
-  if (messages.length === 0) {
-    await ctx.reply("You have not sent any messages. Try /start!", {
-      reply_parameters: {
-        message_id: ctx.msgId,
-        allow_sending_without_reply: true,
-      },
-    });
-    return;
-  }
+//   if (messages.length === 0) {
+//     await ctx.reply("You have not sent any messages. Try /start!", {
+//       reply_parameters: {
+//         message_id: ctx.msgId,
+//         allow_sending_without_reply: true,
+//       },
+//     });
+//     return;
+//   }
 
-  let cost = 0;
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let turns = [];
+//   let cost = 0;
+//   let totalInputTokens = 0;
+//   let totalOutputTokens = 0;
+//   let turns = [];
 
-  // Chunk messages into conversation turns
-  let turn = { input: "", output: "" };
-  for (let i = 0; i < messages.length; i++) {
-    const message = JSON.parse(messages[i].json);
-    if (message.role === "user") {
-      if (typeof message.content === "string") {
-        turn.input += message.content;
-      } else if (Array.isArray(message.content)) {
-        for (const part of message.content) {
-          if (part.type === "image_url") {
-            cost += 0.003;
-          }
-          if (part.type === "text") {
-            turn.input += part.text;
-          }
-        }
-      }
-    }
-    if (message.role === "tool") {
-      turn.input += message.content;
-    }
-    if (message.role === "assistant") {
-      if (typeof message.content === "string") {
-        turn.output += message.content;
-      } else if (Array.isArray(message.content)) {
-        turn.output += message.content.join("");
-      }
-      turns.push(turn);
-      turn = { input: "", output: "" };
-    }
-  }
+//   // Chunk messages into conversation turns
+//   let turn = { input: "", output: "" };
+//   for (let i = 0; i < messages.length; i++) {
+//     const message = JSON.parse(messages[i].json);
+//     if (message.role === "user") {
+//       if (typeof message.content === "string") {
+//         turn.input += message.content;
+//       } else if (Array.isArray(message.content)) {
+//         for (const part of message.content) {
+//           if (part.type === "image_url") {
+//             cost += 0.003;
+//           }
+//           if (part.type === "text") {
+//             turn.input += part.text;
+//           }
+//         }
+//       }
+//     }
+//     if (message.role === "tool") {
+//       turn.input += message.content;
+//     }
+//     if (message.role === "assistant") {
+//       if (typeof message.content === "string") {
+//         turn.output += message.content;
+//       } else if (Array.isArray(message.content)) {
+//         turn.output += message.content.join("");
+//       }
+//       turns.push(turn);
+//       turn = { input: "", output: "" };
+//     }
+//   }
 
-  const enc = encoding_for_model("gpt-4o");
+//   const enc = encoding_for_model("gpt-4o");
 
-  for (let lim = 0; lim < turns.length; lim++) {
-    for (let m = 0; m <= lim; m++) {
-      const inputTokens = enc.encode(turns[m].input);
-      const outputTokens = enc.encode(turns[m].output);
+//   for (let lim = 0; lim < turns.length; lim++) {
+//     for (let m = 0; m <= lim; m++) {
+//       const inputTokens = enc.encode(turns[m].input);
+//       const outputTokens = enc.encode(turns[m].output);
 
-      totalInputTokens += inputTokens.length;
-      totalOutputTokens += outputTokens.length;
+//       totalInputTokens += inputTokens.length;
+//       totalOutputTokens += outputTokens.length;
 
-      cost += inputTokens.length * (5 / 1_000_000);
-      cost += outputTokens.length * (15 / 1_000_000);
-    }
-  }
+//       cost += inputTokens.length * (5 / 1_000_000);
+//       cost += outputTokens.length * (15 / 1_000_000);
+//     }
+//   }
 
-  await ctx.replyFmt(
-    fmt([
-      underline(`[${bold("USAGE")}]`),
-      `\n\n`,
-      `You have used this amount of input tokens: ${totalInputTokens}\n`,
-      `You have used this amount of output tokens: ${totalOutputTokens}`,
-      `\n\n`,
-      `Your total spending is: ${cost} USD`,
-    ]),
-  );
-});
+//   await ctx.replyFmt(
+//     fmt([
+//       underline(`[${bold("USAGE")}]`),
+//       `\n\n`,
+//       `You have used this amount of input tokens: ${totalInputTokens}\n`,
+//       `You have used this amount of output tokens: ${totalOutputTokens}`,
+//       `\n\n`,
+//       `Your total spending is: ${cost} USD`,
+//     ]),
+//   );
+// });
 
 bot.command("clear", async (ctx) => {
   const args = ctx.match.trim();
@@ -202,13 +206,11 @@ bot.command("clear", async (ctx) => {
     chatId = ctx.chatId;
   }
 
-  const result = await db
-    .delete(tables.messages)
-    .where(eq(tables.messages.chatId, chatId));
+  const count = await kv.lLen(`message_turns:${chatId}`);
 
-  logger.debug(result);
+  await kv.del(`message_turns:${chatId}`);
 
-  await ctx.reply(`All message history cleared. ${result.rowsAffected}`);
+  await ctx.reply(`All ${count} messages cleared.`);
 });
 
 bot.command("topup", async (ctx) => {
@@ -254,17 +256,17 @@ bot.on("pre_checkout_query", async (ctx) => {
     where: eq(tables.users.telegramId, ctx.from.id),
   });
   if (!user) {
-    user = await db
+    const inserted = await db
       .insert(tables.users)
       .values({
         telegramId: ctx.from.id,
         username: ctx.from.username,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
-        credits: 0,
+        credits: String(0),
       })
-      .returning()
-      .get();
+      .returning();
+    user = inserted[0];
     await ctx.reply("Welcome to raphGPT!");
   }
   assert(user, "Unable to retrieve user");
@@ -311,25 +313,23 @@ bot.on("message", async (ctx) => {
     where: eq(tables.users.telegramId, ctx.from.id),
   });
   if (!user) {
-    user = await db
+    const inserted = await db
       .insert(tables.users)
       .values({
         telegramId: ctx.from.id,
         username: ctx.from.username,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
-        credits: 69,
+        credits: String(69),
       })
-      .returning()
-      .get();
+      .returning();
+    user = inserted[0];
     await ctx.replyFmt(
-      fmt`${bold(
-        `Welcome to raphGPT. You have been blessed with 69 tokens to start with.`,
-      )}
+      fmt`${bold(`Welcome to raphGPT. You have a free trial of 69 tokens.`)}
 ${italic(`You can get more tokens from the store (/topup)`)}`,
     );
   } else {
-    user = await db
+    const updated = await db
       .update(tables.users)
       .set({
         username: ctx.from.username,
@@ -337,54 +337,20 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         lastName: ctx.from.last_name,
       })
       .where(eq(tables.users.telegramId, ctx.from.id))
-      .returning()
-      .get();
+      .returning();
+    user = updated[0];
   }
   assert(user, "Unable to retrieve user");
 
   // Check if user has enough credits
   // Excluding TELEGRAM_BOT_OWNER
   if (
-    user.credits <= 0 &&
+    parseFloat(user.credits) <= 0 &&
     user.telegramId !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())
   ) {
     return await ctx.reply(
       "You have run out of credits! Use /topup to get more.",
     );
-  }
-
-  let file: {
-    localPath: string;
-    remoteUrl: string;
-    fileType: FileTypeResult | null;
-  } | null = null;
-  if (ctx.has(":file")) {
-    const telegramFile = await ctx.getFile();
-    logger.debug(telegramFile);
-
-    // Construct file URL
-    const fileUrl = `https://${getEnv("TELEGRAM_API_FILES_ROOT")}/${getEnv("TELEGRAM_BOT_TOKEN")}/${telegramFile.file_path}`;
-
-    // Download file
-    const localPath = path.join(LOCAL_FILES_DIR, createId());
-    await streamPipeline(got.stream(fileUrl), fs.createWriteStream(localPath));
-
-    // Detect file type
-    const fileType = await fileTypeFromFile(localPath);
-    logger.info(fileType, "Document file type");
-
-    file = {
-      remoteUrl: fileUrl,
-      localPath,
-      fileType: fileType ?? null,
-    };
-
-    // Rename file with better extension
-    if (fileType) {
-      const localPathWithExt = `${localPath}.${fileType.ext}`;
-      await fs.promises.rename(localPath, localPathWithExt);
-      file.localPath = localPathWithExt;
-    }
   }
 
   if (ctx.msg.text?.startsWith("-bot ")) {
@@ -397,26 +363,42 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
   if (ctx.msg.text) {
     toSend.push({ type: "text", text: ctx.msg.text });
   }
-  if (file && ctx.msg.voice) {
-    const transcription: string = await callBeamEndpoint("transcribe-audio", {
-      file_url: file.remoteUrl,
-      lang: "en",
-    });
+  if (ctx.msg.voice) {
+    const file = await downloadFile(ctx);
+    const result = await runModel(
+      "openai/whisper:cdd97b257f93cb89dede1c7584e3f3dfc969571b357dbcee08e793740bedd854",
+      {
+        audio: file.remoteUrl,
+        language: "auto",
+      },
+      z.object({
+        segments: z.array(z.unknown()),
+        transcription: z.string(),
+        detected_language: z.string(),
+      }),
+    );
+    logger.debug(result, "Transcription");
 
-    logger.debug(transcription, "Transcription");
-
-    toSend.push({ type: "text", text: transcription });
+    toSend.push({ type: "text", text: result.transcription });
   }
-  if (file && ctx.msg.video_note) {
-    const transcription: string = await callBeamEndpoint("transcribe-audio", {
-      file_url: file.remoteUrl,
-      lang: "en",
-    });
+  if (ctx.msg.video_note) {
+    const file = await downloadFile(ctx);
+    const result = await runModel(
+      "openai/whisper:cdd97b257f93cb89dede1c7584e3f3dfc969571b357dbcee08e793740bedd854",
+      {
+        audio: file.remoteUrl,
+        language: "auto",
+      },
+      z.object({
+        segments: z.array(z.unknown()),
+        transcription: z.string(),
+        detected_language: z.string(),
+      }),
+    );
+    logger.debug(result, "Transcription");
 
-    logger.debug(transcription, "Transcription");
-
-    const selectedFrames = await callPython("extract-video-frames", {
-      video_url: file.remoteUrl,
+    const selectedFrames = await callPython("processVideo", {
+      file_path: file.localPath,
       lang: "en",
     });
 
@@ -428,24 +410,26 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     for (const result of selectedFrames) {
       toSend.push({
         type: "image",
-        image: result.frame.data,
+        image: await fs.promises.readFile(result.frame.path),
       });
     }
     toSend.push({
       type: "text",
-      text: transcription,
+      text: result.transcription,
     });
   }
-  if (file && ctx.msg.photo) {
+  if (ctx.msg.photo) {
+    const file = await downloadFile(ctx);
     const image = await sharp(file.localPath)
       .jpeg({ mozjpeg: true })
       .toBuffer();
     toSend.push({
       type: "image",
-      image: image.toString("base64"),
+      image,
     });
   }
-  if (file && ctx.msg.document) {
+  if (ctx.msg.document) {
+    const file = await downloadFile(ctx);
     if (file.fileType) {
       if (file.fileType.ext === "pdf") {
         toSend.push({
@@ -505,7 +489,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       if (file.fileType.ext === "zip") {
         // unzip the file
         const contentDir = await fs.promises.mkdtemp(
-          path.join(process.cwd(), LOCAL_FILES_DIR, "zip-"),
+          path.join(LOCAL_FILES_DIR, "zip-"),
         );
 
         await ctx.reply("Unzipping...", {
@@ -540,11 +524,19 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
         logger.info(filePaths, "Unzipped files");
 
-        // Write file contents to database
+        let textFilePaths = [];
+
+        for (const filePath of filePaths) {
+          const binaryType = await fileTypeFromFile(filePath);
+          if (!binaryType) {
+            textFilePaths.push(filePath);
+          }
+        }
+
         const localFiles = await db
           .insert(tables.localFiles)
           .values(
-            filePaths.map((p) => ({
+            textFilePaths.map((p) => ({
               path: p,
               content: fs.readFileSync(p, "utf-8"),
             })),
@@ -584,13 +576,14 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       text: JSON.stringify(ctx.msg.location),
     });
   }
-  if (file && ctx.msg.sticker) {
+  if (ctx.msg.sticker) {
+    const file = await downloadFile(ctx);
     const image = await sharp(file.localPath)
       .jpeg({ mozjpeg: true })
       .toBuffer();
     toSend.push({
       type: "image",
-      image: image.toString("base64"),
+      image,
     });
   }
   if (ctx.msg.caption) {
@@ -600,49 +593,19 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     });
   }
 
-  logger.debug({ toSend, remindingSystemPrompt });
+  logger.debug(inspect({ toSend, remindingSystemPrompt }));
 
-  const history = await db.query.messages
-    .findMany({
-      where: (messages, { eq, and }) => {
-        if (ctx.msg.message_thread_id) {
-          return and(
-            eq(messages.chatId, ctx.chatId),
-            eq(messages.threadId, ctx.msg.message_thread_id),
-          );
-        } else {
-          return eq(messages.chatId, ctx.chatId);
-        }
-      },
-      orderBy: (messages, { asc }) => [
-        asc(messages.created),
-        asc(messages.turnId),
-      ],
-    })
-    .then((results) => {
-      let turns: (typeof tables.messages.$inferSelect)[][] = [];
-      for (const result of results) {
-        const prevTurnIdx = turns.findIndex(
-          (t) => t[0].turnId === result.turnId,
-        );
-        if (prevTurnIdx > -1) {
-          turns[prevTurnIdx].push(result);
-        } else {
-          turns.push([result]);
-        }
-      }
-      return turns;
-    })
-    .then((turns) =>
-      turns.map((t) => t.map((m) => JSON.parse(m.json) as CoreMessage)),
-    );
+  const messages = (
+    await kv.lRange(
+      `message_turns:${ctx.chatId}`,
+      -getEnv("MESSAGE_CHUNKED_HISTORY_SIZE", z.coerce.number()),
+      -1,
+    )
+  )
+    .map((t) => superjson.parse(t))
+    .flat(2) as CoreMessage[];
 
-  logger.debug({ history }, "Message History");
-
-  // Use last x turns as history
-  const messages = history
-    .slice(-getEnv("MESSAGE_CHUNKED_HISTORY_SIZE", z.coerce.number()))
-    .flat(2);
+  logger.debug(`Message History: ${inspect(messages)}`);
 
   messages.push({
     role: "system",
@@ -654,12 +617,11 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     content: toSend,
   });
 
-  logger.debug({ messages }, "OpenAI messages");
-
-  // let inputTokens = 0;
-  // let outputTokens = 0;
-
-  const { text, responseMessages, usage } = await generateText({
+  const {
+    text: finalResponse,
+    responseMessages,
+    usage,
+  } = await generateText({
     model: openai("gpt-4o"),
     tools: mainFunctions(ctx.chatId, ctx.msgId),
     system: await buildPrompt("system", {
@@ -667,49 +629,22 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       date: new Date().toLocaleString(),
     }),
     messages,
+    maxToolRoundtrips: 5,
   });
-
-  const prevTurnMessage = await db
-    .select()
-    .from(tables.messages)
-    .orderBy(desc(tables.messages.turnId))
-    .limit(1)
-    .get();
-  let turnId = 0;
-  if (prevTurnMessage) {
-    turnId = prevTurnMessage.turnId + 1;
-  }
-
-  await db.insert(tables.messages).values({
-    turnId,
-    chatId: ctx.chatId,
-    threadId: ctx.msg.message_thread_id ?? ctx.msgId,
-    json: JSON.stringify({
-      role: "user",
-      content: toSend,
-    }),
-  });
-
-  for (const message of responseMessages) {
-    await db.insert(tables.messages).values({
-      turnId,
-      chatId: ctx.chatId,
-      threadId: ctx.msg.message_thread_id ?? ctx.msgId,
-      json: JSON.stringify(message),
-    });
-  }
+  const turn = [{ role: "user", content: toSend }, ...responseMessages];
+  await kv.rPush(`message_turns:${ctx.chatId}`, superjson.stringify(turn));
 
   // Send final response to user
   if (ctx.msg.voice || ctx.msg.video_note) {
     const { text: toSpeak, usage: voiceUsage } = await generateText({
-      model: openrouter("mistralai/mistral-7b-instruct:free"),
+      model: openrouter(OPENROUTER_FREE),
       prompt: await buildPrompt("speech", {
         originalQuery: ctx.msg.text,
-        output: text,
+        output: finalResponse,
       }),
     });
 
-    logger.info(toSpeak, "To be spoken (formatted)");
+    logger.info(`To be spoken (formatted): "${toSpeak}"`);
 
     const openai = new OpenAI();
     const mp3 = await openai.audio.speech.create({
@@ -718,12 +653,12 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       input: toSpeak,
     });
     const fileId = createId();
-    const spokenPath = `voice-${fileId}.mp3`;
+    const spokenPath = path.join(DATA_DIR, `voice-${fileId}.mp3`);
     await fs.promises.writeFile(
       spokenPath,
       Buffer.from(await mp3.arrayBuffer()),
     );
-    const outputPath = `voice-${fileId}.ogg`;
+    const outputPath = path.join(DATA_DIR, `voice-${fileId}.ogg`);
     await runCommand(
       `ffmpeg -i ${spokenPath} -acodec libopus -filter:a "volume=6dB" ${outputPath}`,
     );
@@ -737,6 +672,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         },
       },
     );
+
+    await fs.promises.rm(spokenPath);
+    await fs.promises.rm(outputPath);
 
     assert(voiceUsage, "Could not get usage details");
     await db
@@ -756,11 +694,13 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
   }
 
+  logger.debug(`Final response: ${finalResponse}`);
+
   // Convert message to MarkdownV2
-  const mdv2 = telegramifyMarkdown(text, "escape");
+  const mdv2 = telegramifyMarkdown(finalResponse, "escape");
 
   try {
-    logger.debug({ text, mdv2 }, "Telegramify Markdown");
+    logger.debug({ finalResponse, mdv2 }, "Telegramify Markdown");
     await telegram.sendMessage(ctx.chatId, mdv2, {
       parse_mode: "MarkdownV2",
     });
@@ -773,38 +713,21 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     try {
       // limit content length to fit context size for model
       const enc = encoding_for_model("gpt-4o");
-      const tok = enc.encode(text);
+      const tok = enc.encode(finalResponse);
       const lim = tok.slice(0, 1024);
       const txt = new TextDecoder().decode(enc.decode(lim));
       enc.free();
 
-      const completion: OpenAI.Chat.ChatCompletion = await got
-        .post("https://openrouter.ai/api/v1/chat/completions", {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          },
-          json: {
-            model: "meta-llama/llama-3.1-8b-instruct:free",
-            messages: [
-              {
-                role: "system",
-                content: "You are a helpful assistant.",
-              },
-              {
-                role: "user",
-                content: [
-                  "Generate a suitable title for the following article:",
-                  txt,
-                  "Reply only with the title and nothing else.",
-                  "Do not use any quotes to wrap the title.",
-                ].join("\n"),
-              },
-            ],
-          },
-        })
-        .json();
-
-      pageTitle = completion.choices[0].message.content;
+      const { text: title } = await generateText({
+        model: openrouter(OPENROUTER_FREE),
+        prompt: [
+          "Generate a suitable title for the following article:",
+          txt,
+          "Reply only with the title and nothing else.",
+          "Do not use any quotes to wrap the title.",
+        ].join("\n"),
+      });
+      pageTitle = title;
     } catch (e) {
       logger.error(e, "Error occurred while generating title");
       pageTitle = "Bot Response";
@@ -814,7 +737,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .insert(tables.fullResponses)
       .values({
         title: pageTitle,
-        content: text,
+        content: finalResponse,
       })
       .returning();
     const published = insertResult[0];

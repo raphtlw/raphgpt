@@ -16,7 +16,9 @@ import { telegram } from "../bot/telegram.js";
 import { db, tables } from "../db/db.js";
 import { BROWSER } from "../helpers/browser.js";
 import { getEnv } from "../helpers/env.js";
+import { convertHtmlToMarkdown } from "../helpers/markdown.js";
 import { openrouter } from "../helpers/openrouter.js";
+import { runModel } from "../helpers/replicate.js";
 import { runCommand } from "../helpers/shell.js";
 
 export const mainFunctions = (chatId: number, msgId: number) => {
@@ -72,21 +74,15 @@ export const mainFunctions = (chatId: number, msgId: number) => {
 
             logger.debug(html);
 
-            const markdown = z.object({ result: z.string() }).parse(
-              await got
-                .post(`${process.env.PYTHON_URL}/getMarkdownFromHtml`, {
-                  json: { html },
-                })
-                .json(),
-            );
+            const markdown = await convertHtmlToMarkdown(html);
 
-            logger.debug(markdown.result);
+            logger.debug(markdown);
 
             await page.close();
 
             // limit content length to fit context size for model
             const enc = encoding_for_model("gpt-4o");
-            const tok = enc.encode(markdown.result);
+            const tok = enc.encode(markdown);
             const lim = tok.slice(0, 512);
             const txt = new TextDecoder().decode(enc.decode(lim));
             enc.free();
@@ -318,7 +314,7 @@ export const mainFunctions = (chatId: number, msgId: number) => {
     read_file: tool({
       description: "Access local file by ID",
       parameters: z.object({
-        id: z.string().describe("File ID"),
+        id: z.number().describe("File ID"),
       }),
       async execute({ id }) {
         const file = await db.query.localFiles.findFirst({
@@ -337,33 +333,27 @@ export const mainFunctions = (chatId: number, msgId: number) => {
         aspect_ratio: z.enum([
           "1:1",
           "16:9",
+          "21:9",
           "2:3",
           "3:2",
           "4:5",
           "5:4",
           "9:16",
+          "9:21",
         ]),
-        steps: z.number().min(1).max(50).default(25),
-        guidance: z.number().min(2).max(5).default(3),
-        interval: z.number().min(1).max(4).default(2),
       }),
-      async execute({ prompt, aspect_ratio, steps, guidance, interval }) {
-        const replicate = new Replicate();
-        logger.info(
-          { prompt, aspect_ratio, steps, guidance, interval },
-          "Generating image using FLUX",
+      async execute({ prompt, aspect_ratio }) {
+        logger.info({ prompt, aspect_ratio }, "Generating image using FLUX");
+        const output = await runModel(
+          "black-forest-labs/flux-schnell",
+          {
+            prompt,
+            num_outputs: 1,
+            aspect_ratio,
+            output_format: "png",
+          },
+          z.array(z.string()),
         );
-        const output = await replicate
-          .run("black-forest-labs/flux-pro", {
-            input: {
-              prompt,
-              aspect_ratio,
-              steps,
-              guidance,
-              interval,
-            },
-          })
-          .then((o) => z.array(z.string()).parse(o));
 
         const caption = fmt([fmt`\n${bold("Prompt")}: ${italic(prompt)}`]);
 
