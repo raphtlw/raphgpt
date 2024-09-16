@@ -11,6 +11,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^0.0.48
         version: 0.0.48(zod@3.23.8)
+      '@grammyjs/commands':
+        specifier: ^0.10.0
+        version: 0.10.0
       '@grammyjs/parse-mode':
         specifier: ^1.10.0
         version: 1.10.0(grammy@1.29.0)
@@ -650,6 +653,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@grammyjs/commands@0.10.0':
+    resolution: {integrity: sha512-lrwrwUjNMbO0/1OvPXUQGQLC2v6bfXdKbSMHHD6ZVm78PUEKGYACUrqlWBfYIA9EXqzDYXns01+hYhTBfr/Www==}
 
   '@grammyjs/parse-mode@1.10.0':
     resolution: {integrity: sha512-ZjbY2Ax0b4Nf8lPz3NV0cWDxUC10kOkzgxws+iTdgG+hAiPQVUnP/oJnAKrW1ZQOWULZYQ4GOR/+aCZHyUuLQA==}
@@ -2607,6 +2613,9 @@ packages:
   trough@1.0.5:
     resolution: {integrity: sha512-rvuRbTarPXmMb79SmzEp8aqXNKcK+y0XaB298IXueQ8I2PsrATcPBCSPyK/dDNa2iWOhKlfNnOjdAOTBU/nkFA==}
 
+  ts-pattern@5.3.1:
+    resolution: {integrity: sha512-1RUMKa8jYQdNfmnK4jyzBK3/PS/tnjcZ1CW0v1vWDeYe5RBklc/nquw03MEoB66hVBm4BnlCfmOqDVxHyT1DpA==}
+
   tslib@2.6.3:
     resolution: {integrity: sha512-xNvxJEOUiWPGhUuUdQgAJPKOOJfGnIyKySOc09XkKsgdUV/3E2zvwZYdejjmRgPCgcym1juLH3226yA7sEFJKQ==}
 
@@ -3147,6 +3156,15 @@ snapshots:
 
   '@esbuild/win32-x64@0.23.1':
     optional: true
+
+  '@grammyjs/commands@0.10.0':
+    dependencies:
+      '@grammyjs/types': 3.13.0
+      grammy: 1.29.0
+      ts-pattern: 5.3.1
+    transitivePeerDependencies:
+      - encoding
+      - supports-color
 
   '@grammyjs/parse-mode@1.10.0(grammy@1.29.0)':
     dependencies:
@@ -5331,6 +5349,8 @@ snapshots:
       punycode: 2.3.1
 
   trough@1.0.5: {}
+
+  ts-pattern@5.3.1: {}
 
   tslib@2.6.3: {}
 

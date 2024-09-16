@@ -1,5 +1,6 @@
 import { openai } from "@ai-sdk/openai";
-import { bold, fmt, italic } from "@grammyjs/parse-mode";
+import { CommandGroup } from "@grammyjs/commands";
+import { bold, fmt, italic, ParseModeFlavor } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { CoreMessage, generateText, UserContent } from "ai";
 import assert from "assert";
@@ -9,7 +10,7 @@ import FormData from "form-data";
 import fs from "fs";
 import { globby } from "globby";
 import got from "got";
-import { Context, InlineKeyboard, InputFile } from "grammy";
+import { CommandContext, Context, InlineKeyboard, InputFile } from "grammy";
 import OpenAI from "openai";
 import path from "path";
 import pdf2pic from "pdf2pic";
@@ -32,6 +33,8 @@ import { superjson } from "../helpers/superjson.js";
 import { kv } from "../kv/redis.js";
 import { bot } from "./bot.js";
 import { DATA_DIR, LOCAL_FILES_DIR, OPENROUTER_FREE } from "./constants.js";
+
+const commands = new CommandGroup<CommandContext<ParseModeFlavor<Context>>>();
 
 const calculateStripeFee = (amount: number) => {
   return (amount / 100) * 3.4 + 50;
@@ -87,169 +90,93 @@ bot.on("callback_query:data", async (ctx) => {
   await ctx.answerCallbackQuery({ text: "What is love, baby don't hurt me" });
 });
 
-bot.command("start", async (ctx) => {
-  await ctx.reply(
-    "Hey, what's up? You can send a text, photo, telebubble or a voice message.",
-  );
-});
-
-bot.command("balance", async (ctx) => {
-  let readUserId = ctx.from?.id;
-  if (ctx.match.length > 0) {
-    readUserId = parseInt(ctx.match);
-  }
-  if (!readUserId) return await ctx.reply("User ID not specified");
-
-  const user = await db.query.users.findFirst({
-    where: eq(tables.users.telegramId, readUserId),
+commands
+  .command("start", "Start the bot")
+  .addToScope({ type: "default" }, async (ctx) => {
+    await ctx.reply(
+      "Hey, what's up? You can send a text, photo, telebubble or a voice message.",
+    );
   });
 
-  if (!user) return await ctx.reply("User not found");
+commands
+  .command("balance", "Check token balance")
+  .addToScope({ type: "default" }, async (ctx) => {
+    let readUserId = ctx.from?.id;
+    if (ctx.match.length > 0) {
+      readUserId = parseInt(ctx.match);
+    }
+    if (!readUserId) return await ctx.reply("User ID not specified");
 
-  await ctx.replyFmt(
-    fmt`User ID: ${bold(`${user.id}`)}
+    const user = await db.query.users.findFirst({
+      where: eq(tables.users.telegramId, readUserId),
+    });
+
+    if (!user) return await ctx.reply("User not found");
+
+    await ctx.replyFmt(
+      fmt`User ID: ${bold(`${user.id}`)}
 Tokens left: ${bold(`${user.credits}`)}`,
-  );
-});
+    );
+  });
 
-// bot.command("usage", async (ctx) => {
-//   let readChatId = ctx.chatId;
-//   if (ctx.match.length > 0) {
-//     readChatId = parseInt(ctx.match);
-//   }
+commands
+  .command("clear", "Clear conversation history")
+  .addToScope({ type: "default" }, async (ctx) => {
+    const args = ctx.match.trim();
+    let chatId: number;
 
-//   const messages = await db.query.messages.findMany({
-//     where: eq(tables.messages.chatId, readChatId),
-//   });
+    if (args.length > 0) {
+      chatId = parseInt(args);
+    } else {
+      chatId = ctx.chatId;
+    }
 
-//   if (messages.length === 0) {
-//     await ctx.reply("You have not sent any messages. Try /start!", {
-//       reply_parameters: {
-//         message_id: ctx.msgId,
-//         allow_sending_without_reply: true,
-//       },
-//     });
-//     return;
-//   }
+    const count = await kv.lLen(`message_turns:${chatId}`);
 
-//   let cost = 0;
-//   let totalInputTokens = 0;
-//   let totalOutputTokens = 0;
-//   let turns = [];
+    await kv.del(`message_turns:${chatId}`);
 
-//   // Chunk messages into conversation turns
-//   let turn = { input: "", output: "" };
-//   for (let i = 0; i < messages.length; i++) {
-//     const message = JSON.parse(messages[i].json);
-//     if (message.role === "user") {
-//       if (typeof message.content === "string") {
-//         turn.input += message.content;
-//       } else if (Array.isArray(message.content)) {
-//         for (const part of message.content) {
-//           if (part.type === "image_url") {
-//             cost += 0.003;
-//           }
-//           if (part.type === "text") {
-//             turn.input += part.text;
-//           }
-//         }
-//       }
-//     }
-//     if (message.role === "tool") {
-//       turn.input += message.content;
-//     }
-//     if (message.role === "assistant") {
-//       if (typeof message.content === "string") {
-//         turn.output += message.content;
-//       } else if (Array.isArray(message.content)) {
-//         turn.output += message.content.join("");
-//       }
-//       turns.push(turn);
-//       turn = { input: "", output: "" };
-//     }
-//   }
+    await ctx.reply(`All ${count} messages cleared.`);
+  });
 
-//   const enc = encoding_for_model("gpt-4o");
+commands
+  .command("topup", "Get more tokens")
+  .addToScope({ type: "default" }, async (ctx) => {
+    const args = ctx.match.trim();
 
-//   for (let lim = 0; lim < turns.length; lim++) {
-//     for (let m = 0; m <= lim; m++) {
-//       const inputTokens = enc.encode(turns[m].input);
-//       const outputTokens = enc.encode(turns[m].output);
-
-//       totalInputTokens += inputTokens.length;
-//       totalOutputTokens += outputTokens.length;
-
-//       cost += inputTokens.length * (5 / 1_000_000);
-//       cost += outputTokens.length * (15 / 1_000_000);
-//     }
-//   }
-
-//   await ctx.replyFmt(
-//     fmt([
-//       underline(`[${bold("USAGE")}]`),
-//       `\n\n`,
-//       `You have used this amount of input tokens: ${totalInputTokens}\n`,
-//       `You have used this amount of output tokens: ${totalOutputTokens}`,
-//       `\n\n`,
-//       `Your total spending is: ${cost} USD`,
-//     ]),
-//   );
-// });
-
-bot.command("clear", async (ctx) => {
-  const args = ctx.match.trim();
-  let chatId: number;
-
-  if (args.length > 0) {
-    chatId = parseInt(args);
-  } else {
-    chatId = ctx.chatId;
-  }
-
-  const count = await kv.lLen(`message_turns:${chatId}`);
-
-  await kv.del(`message_turns:${chatId}`);
-
-  await ctx.reply(`All ${count} messages cleared.`);
-});
-
-bot.command("topup", async (ctx) => {
-  const args = ctx.match.trim();
-
-  if (args.length === 0) {
-    const buildSelection = (amount: number) =>
-      InlineKeyboard.text(
-        `${amount} tokens ($${Math.trunc(amount + calculateStripeFee(amount)) / 100})`,
-        JSON.stringify({ action: "deposit-amount-chosen", amount }),
-      );
-    return await ctx.reply(
-      [
-        "Payments are securely powered by Stripe.",
-        "Please select the number of tokens you wish to purchase, or send a custom number (>100).",
-      ].join("\n"),
-      {
-        reply_markup: new InlineKeyboard()
-          .row(buildSelection(100), buildSelection(150))
-          .row(buildSelection(200), buildSelection(300))
-          .row(
-            InlineKeyboard.text(
-              "Cancel ❌",
-              JSON.stringify({ action: "cancel" }),
+    if (args.length === 0) {
+      const buildSelection = (amount: number) =>
+        InlineKeyboard.text(
+          `${amount} tokens ($${Math.trunc(amount + calculateStripeFee(amount)) / 100})`,
+          JSON.stringify({ action: "deposit-amount-chosen", amount }),
+        );
+      return await ctx.reply(
+        [
+          "Payments are securely powered by Stripe.",
+          "Please select the number of tokens you wish to purchase, or send a custom number (>100).",
+        ].join("\n"),
+        {
+          reply_markup: new InlineKeyboard()
+            .row(buildSelection(100), buildSelection(150))
+            .row(buildSelection(200), buildSelection(300))
+            .row(
+              InlineKeyboard.text(
+                "Cancel ❌",
+                JSON.stringify({ action: "cancel" }),
+              ),
             ),
-          ),
-      },
-    );
-  }
+        },
+      );
+    }
 
-  if (args.indexOf(".") > -1) {
-    return await ctx.reply(
-      "Decimals are not supported! Must be a whole number: /topup 300",
-    );
-  }
+    if (args.indexOf(".") > -1) {
+      return await ctx.reply(
+        "Decimals are not supported! Must be a whole number: /topup 300",
+      );
+    }
 
-  const amount = parseInt(args);
-  await sendBuyCreditsInvoice(ctx, amount);
-});
+    const amount = parseInt(args);
+    await sendBuyCreditsInvoice(ctx, amount);
+  });
 
 bot.on("pre_checkout_query", async (ctx) => {
   let user = await db.query.users.findFirst({
@@ -794,12 +721,8 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
   }
 });
 
-bot.api.setMyCommands([
-  { command: "start", description: "Start the bot" },
-  { command: "usage", description: "Check usage and spending" },
-  { command: "topup", description: "Get more tokens" },
-  { command: "clear", description: "Clear conversation history" },
-  { command: "balance", description: "Check token balance" },
-]);
+await commands.setCommands(bot);
+
+bot.use(commands as CommandGroup<ParseModeFlavor<Context>>);
 
 export { bot };

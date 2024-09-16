@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^0.0.48",
+    "@grammyjs/commands": "^0.10.0",
     "@grammyjs/parse-mode": "^1.10.0",
     "@grammyjs/runner": "^2.0.3",
     "@mozilla/readability": "^0.5.0",
