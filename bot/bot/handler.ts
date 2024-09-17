@@ -1,6 +1,13 @@
 import { openai } from "@ai-sdk/openai";
 import { CommandGroup } from "@grammyjs/commands";
-import { bold, fmt, italic, ParseModeFlavor } from "@grammyjs/parse-mode";
+import {
+  bold,
+  code,
+  fmt,
+  italic,
+  ParseModeFlavor,
+  underline,
+} from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { CoreMessage, generateText, UserContent } from "ai";
 import assert from "assert";
@@ -10,7 +17,7 @@ import FormData from "form-data";
 import fs from "fs";
 import { globby } from "globby";
 import got from "got";
-import { CommandContext, Context, InlineKeyboard, InputFile } from "grammy";
+import { Context, InlineKeyboard, InputFile } from "grammy";
 import OpenAI from "openai";
 import path from "path";
 import pdf2pic from "pdf2pic";
@@ -21,6 +28,7 @@ import { inspect } from "util";
 import { z } from "zod";
 import logger from "../bot/logger.js";
 import { downloadFile, telegram } from "../bot/telegram.js";
+import { chroma } from "../db/chroma.js";
 import { db, tables } from "../db/db.js";
 import { mainFunctions } from "../functions/main.js";
 import { getEnv } from "../helpers/env.js";
@@ -32,9 +40,10 @@ import { runCommand } from "../helpers/shell.js";
 import { superjson } from "../helpers/superjson.js";
 import { kv } from "../kv/redis.js";
 import { bot } from "./bot.js";
+import { configSchema, getConfigValue } from "./config.js";
 import { DATA_DIR, LOCAL_FILES_DIR, OPENROUTER_FREE } from "./constants.js";
 
-const commands = new CommandGroup<CommandContext<ParseModeFlavor<Context>>>();
+const commands = new CommandGroup<ParseModeFlavor<Context>>();
 
 const calculateStripeFee = (amount: number) => {
   return (amount / 100) * 3.4 + 50;
@@ -59,7 +68,7 @@ const sendBuyCreditsInvoice = async (ctx: Context, amount: number) => {
       },
     ],
     {
-      provider_token: getEnv("TELEGRAM_PAYMENT_STRIPE_LIVE"),
+      provider_token: getEnv("TELEGRAM_PAYMENT_STRIPE"),
       start_parameter: "",
       photo_url:
         "https://storage.googleapis.com/raphgpt-static/duck-token.jpeg",
@@ -98,85 +107,77 @@ commands
     );
   });
 
-commands
-  .command("balance", "Check token balance")
-  .addToScope({ type: "default" }, async (ctx) => {
-    let readUserId = ctx.from?.id;
-    if (ctx.match.length > 0) {
-      readUserId = parseInt(ctx.match);
-    }
-    if (!readUserId) return await ctx.reply("User ID not specified");
+commands.command("balance", "Check token balance", async (ctx) => {
+  let readUserId = ctx.from?.id;
+  if (ctx.match.length > 0) {
+    readUserId = parseInt(ctx.match);
+  }
+  if (!readUserId) return await ctx.reply("User ID not specified");
 
-    const user = await db.query.users.findFirst({
-      where: eq(tables.users.telegramId, readUserId),
-    });
+  const user = await db.query.users.findFirst({
+    where: eq(tables.users.telegramId, readUserId),
+  });
 
-    if (!user) return await ctx.reply("User not found");
+  if (!user) return await ctx.reply("User not found");
 
-    await ctx.replyFmt(
-      fmt`User ID: ${bold(`${user.id}`)}
+  await ctx.replyFmt(
+    fmt`User ID: ${bold(`${user.id}`)}
 Tokens left: ${bold(`${user.credits}`)}`,
-    );
-  });
+  );
+});
 
-commands
-  .command("clear", "Clear conversation history")
-  .addToScope({ type: "default" }, async (ctx) => {
+commands.command("clear", "Clear conversation history", async (ctx) => {
+  let chatId = ctx.chatId;
+
+  if (ctx.match) {
     const args = ctx.match.trim();
-    let chatId: number;
+    chatId = parseInt(args);
+  }
 
-    if (args.length > 0) {
-      chatId = parseInt(args);
-    } else {
-      chatId = ctx.chatId;
-    }
+  const count = await kv.lLen(`message_turns:${chatId}`);
 
-    const count = await kv.lLen(`message_turns:${chatId}`);
+  await kv.del(`message_turns:${chatId}`);
 
-    await kv.del(`message_turns:${chatId}`);
+  await ctx.reply(`All ${count} messages cleared.`);
+});
 
-    await ctx.reply(`All ${count} messages cleared.`);
-  });
+commands.command("topup", "Get more tokens", async (ctx) => {
+  const cmd = ctx.msg.text.split(" ");
 
-commands
-  .command("topup", "Get more tokens")
-  .addToScope({ type: "default" }, async (ctx) => {
-    const args = ctx.match.trim();
-
-    if (args.length === 0) {
-      const buildSelection = (amount: number) =>
-        InlineKeyboard.text(
-          `${amount} tokens ($${Math.trunc(amount + calculateStripeFee(amount)) / 100})`,
-          JSON.stringify({ action: "deposit-amount-chosen", amount }),
-        );
-      return await ctx.reply(
-        [
-          "Payments are securely powered by Stripe.",
-          "Please select the number of tokens you wish to purchase, or send a custom number (>100).",
-        ].join("\n"),
-        {
-          reply_markup: new InlineKeyboard()
-            .row(buildSelection(100), buildSelection(150))
-            .row(buildSelection(200), buildSelection(300))
-            .row(
-              InlineKeyboard.text(
-                "Cancel ❌",
-                JSON.stringify({ action: "cancel" }),
-              ),
+  if (!cmd[1]) {
+    const buildSelection = (amount: number) =>
+      InlineKeyboard.text(
+        `${amount} tokens ($${Math.trunc(amount + calculateStripeFee(amount)) / 100})`,
+        JSON.stringify({ action: "deposit-amount-chosen", amount }),
+      );
+    return await ctx.reply(
+      [
+        "Payments are securely powered by Stripe.",
+        "Please select the number of tokens you wish to purchase, or send a custom number (>100).",
+      ].join("\n"),
+      {
+        reply_markup: new InlineKeyboard()
+          .row(buildSelection(100), buildSelection(150))
+          .row(buildSelection(200), buildSelection(300))
+          .row(
+            InlineKeyboard.text(
+              "Cancel ❌",
+              JSON.stringify({ action: "cancel" }),
             ),
-        },
-      );
-    }
+          ),
+      },
+    );
+  }
 
-    if (args.indexOf(".") > -1) {
-      return await ctx.reply(
-        "Decimals are not supported! Must be a whole number: /topup 300",
-      );
-    }
+  if (cmd[1].indexOf(".") > -1) {
+    return await ctx.reply(
+      "Decimals are not supported! Must be a whole number: /topup 300",
+    );
+  }
 
-    const amount = parseInt(args);
-    await sendBuyCreditsInvoice(ctx, amount);
-  });
+  const amount = parseInt(cmd[1]);
+  await sendBuyCreditsInvoice(ctx, amount);
+});
 
 bot.on("pre_checkout_query", async (ctx) => {
   let user = await db.query.users.findFirst({
@@ -225,6 +226,67 @@ bot.on("msg:successful_payment", async (ctx) => {
     })
     .where(eq(tables.users.telegramId, ctx.from.id));
 });
+
+commands.command("set", "Set basic settings", async (ctx) => {
+  assert(ctx.from);
+  const cmd = ctx.msg.text.split(" ");
+
+  const key = cmd[1];
+  const value = cmd[2];
+
+  if (!key) {
+    await ctx.replyFmt(
+      fmt([
+        underline(bold("[HELP]")),
+        "\n",
+        "Available settings:\n",
+        (
+          Object.keys(configSchema.shape) as Array<
+            keyof typeof configSchema.shape
+          >
+        )
+          .map((key) => `- ${key} - ${configSchema.shape[key].description}`)
+          .join("\n"),
+      ]),
+    );
+
+    return await ctx.replyFmt(
+      fmt([
+        "Please specify key to set.\n",
+        "Available options: ",
+        Object.keys(configSchema.shape).join(", "),
+      ]),
+    );
+  }
+
+  if (!value) {
+    return await ctx.replyFmt(fmt(["Please specify value."]));
+  }
+
+  configSchema.partial().parse({ [key]: value });
+
+  await kv.HSET(`config:${ctx.from.id}`, key, value);
+
+  return await ctx.reply(`Successfully set ${key} to ${value}`);
+});
+
+commands.command("config", "Get basic settings", async (ctx) => {
+  assert(ctx.from);
+
+  const result = await kv.HGETALL(`config:${ctx.from.id}`);
+
+  await ctx.replyFmt(
+    fmt(["Settings ", code(JSON.stringify(result, undefined, 4))]),
+    {
+      reply_parameters: {
+        message_id: ctx.msgId,
+        allow_sending_without_reply: true,
+      },
+    },
+  );
+});
+
+bot.use(commands);
 
 bot.on("message", async (ctx) => {
   if (
@@ -296,7 +358,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       "openai/whisper:cdd97b257f93cb89dede1c7584e3f3dfc969571b357dbcee08e793740bedd854",
       {
         audio: file.remoteUrl,
-        language: "auto",
+        language: getConfigValue(ctx.from.id, "language"),
       },
       z.object({
         segments: z.array(z.unknown()),
@@ -314,7 +376,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       "openai/whisper:cdd97b257f93cb89dede1c7584e3f3dfc969571b357dbcee08e793740bedd854",
       {
         audio: file.remoteUrl,
-        language: "auto",
+        language: getConfigValue(ctx.from.id, "language"),
       },
       z.object({
         segments: z.array(z.unknown()),
@@ -522,10 +584,26 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
   logger.debug(inspect({ toSend, remindingSystemPrompt }));
 
+  // Search for relevant text in message history
+  const collection = await chroma.getOrCreateCollection({
+    name: "message_history",
+  });
+
+  const relevantInfo = await collection.query({
+    queryTexts: [ctx.msg.text ?? ctx.msg.caption ?? ""],
+    nResults: 4,
+  });
+
+  logger.debug(`Relevant info: ${inspect(relevantInfo)}`);
+
+  remindingSystemPrompt.push(
+    ...relevantInfo.documents[0].filter((d) => d != null),
+  );
+
   const messages = (
     await kv.lRange(
       `message_turns:${ctx.chatId}`,
-      -getEnv("MESSAGE_CHUNKED_HISTORY_SIZE", z.coerce.number()),
+      -(await getConfigValue(ctx.from.id, "messagehistsize")),
       -1,
     )
   )
@@ -550,16 +628,27 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     usage,
   } = await generateText({
     model: openai("gpt-4o"),
-    tools: mainFunctions(ctx.chatId, ctx.msgId),
+    tools: mainFunctions(user.id, ctx.chatId, ctx.msgId),
     system: await buildPrompt("system", {
       me: JSON.stringify(await telegram.getMe()),
       date: new Date().toLocaleString(),
+      language: await getConfigValue(ctx.from.id, "language"),
+      personality: (
+        await db.query.personality.findMany({
+          columns: {
+            id: true,
+            content: true,
+          },
+        })
+      )
+        .map((r) => `${r.id} - ${r.content}`)
+        .join("\n"),
     }),
     messages,
     maxToolRoundtrips: 5,
   });
   const turn = [{ role: "user", content: toSend }, ...responseMessages];
-  await kv.rPush(`message_turns:${ctx.chatId}`, superjson.stringify(turn));
+  await kv.RPUSH(`message_turns:${ctx.chatId}`, superjson.stringify(turn));
 
   // Send final response to user
   if (ctx.msg.voice || ctx.msg.video_note) {
@@ -681,48 +770,91 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         allow_sending_without_reply: true,
       },
     });
+  }
 
-    // Track usage
-    await db
-      .insert(tables.usage)
-      .values({
-        userId: user.id,
-        model: "gpt-4o",
-        inputTokens: usage.promptTokens,
-        outputTokens: usage.completionTokens,
-      })
-      .onConflictDoUpdate({
-        target: [tables.usage.userId, tables.usage.model],
-        set: {
-          inputTokens: sql`${tables.usage.inputTokens} + ${usage.promptTokens}`,
-          outputTokens: sql`${tables.usage.outputTokens} + ${usage.completionTokens}`,
-        },
+  // Track usage
+  await db
+    .insert(tables.usage)
+    .values({
+      userId: user.id,
+      model: "gpt-4o",
+      inputTokens: usage.promptTokens,
+      outputTokens: usage.completionTokens,
+    })
+    .onConflictDoUpdate({
+      target: [tables.usage.userId, tables.usage.model],
+      set: {
+        inputTokens: sql`${tables.usage.inputTokens} + ${usage.promptTokens}`,
+        outputTokens: sql`${tables.usage.outputTokens} + ${usage.completionTokens}`,
+      },
+    });
+
+  let cost = 0;
+
+  cost += usage.promptTokens * (5 / 1_000_000);
+  cost += usage.completionTokens * (15 / 1_000_000);
+
+  // 3% of fees
+  cost += (cost / 100) * 3;
+
+  cost = cost * 100; // Store value without 2 d.p.
+
+  // Subtract credits from user
+  await db
+    .update(tables.users)
+    .set({
+      credits: sql`${tables.users.credits} - ${cost}`,
+    })
+    .where(eq(tables.users.telegramId, ctx.from.id));
+
+  logger.debug({ cost }, "Deducted credits");
+
+  const fromUser: string[] = [];
+  for (const chunk of toSend) {
+    if (chunk.type === "image") {
+      const { text: imageDescription } = await generateText({
+        model: openrouter("mistralai/pixtral-12b:free"),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Describe this image in detail" },
+              chunk,
+            ],
+          },
+        ],
       });
 
-    let cost = 0;
-
-    cost += usage.promptTokens * (5 / 1_000_000);
-    cost += usage.completionTokens * (15 / 1_000_000);
-
-    // 3% of fees
-    cost += (cost / 100) * 3;
-
-    cost = cost * 100; // Store value without 2 d.p.
-
-    // Subtract credits from user
-    await db
-      .update(tables.users)
-      .set({
-        credits: sql`${tables.users.credits} - ${cost}`,
-      })
-      .where(eq(tables.users.telegramId, ctx.from.id));
-
-    logger.debug({ cost }, "Deducted credits");
+      fromUser.push(imageDescription);
+    } else {
+      fromUser.push(chunk.text);
+    }
   }
+
+  const fromBot: string[] = [];
+  for (const message of responseMessages) {
+    if (message.role === "assistant") {
+      for (const chunk of message.content) {
+        if (typeof chunk === "string") {
+          fromBot.push(chunk);
+        } else if (chunk.type === "text") {
+          fromBot.push(chunk.text);
+        }
+      }
+    }
+  }
+
+  logger.debug({ fromUser, fromBot }, "Saving to chromadb");
+
+  await collection.upsert({
+    documents: [
+      `User: ${fromUser.join("\n")}`,
+      `Bot: ${fromBot.join("\n")}`,
+    ].join("\n"),
+    ids: createId(),
+  });
 });
 
 await commands.setCommands(bot);
-
-bot.use(commands as CommandGroup<ParseModeFlavor<Context>>);
 
 export { bot };

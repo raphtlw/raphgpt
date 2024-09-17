@@ -48,3 +48,9 @@ export const localFiles = pgTable("local_files", {
   path: text("path").notNull(),
   content: text("content").notNull(),
 });
+
+export const personality = pgTable("personality", {
+  id: serial("id").primaryKey(),
+  userId: serial("user_id").notNull(),
+  content: text("content").notNull(),
+});

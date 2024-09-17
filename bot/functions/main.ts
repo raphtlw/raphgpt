@@ -21,7 +21,11 @@ import { openrouter } from "../helpers/openrouter.js";
 import { runModel } from "../helpers/replicate.js";
 import { runCommand } from "../helpers/shell.js";
 
-export const mainFunctions = (chatId: number, msgId: number) => {
+export const mainFunctions = (
+  userId: number,
+  chatId: number,
+  msgId: number,
+) => {
   return {
     search_google: tool({
       description:
@@ -423,6 +427,41 @@ export const mainFunctions = (chatId: number, msgId: number) => {
         logger.debug(res, "OpenWeather API response");
 
         return res;
+      },
+    }),
+
+    delete_personality: tool({
+      parameters: z.object({
+        id: z.number().describe("ID of personality record to remove"),
+      }),
+      async execute({ id }) {
+        await db
+          .delete(tables.personality)
+          .where(eq(tables.personality.id, id));
+
+        return "Removed memory from database";
+      },
+    }),
+
+    add_personality: tool({
+      parameters: z.object({
+        text: z
+          .string()
+          .describe(
+            "What to remember to alter my behavior when responding to future messages, in plain text",
+          ),
+      }),
+      async execute({ text }) {
+        await db.insert(tables.personality).values({
+          userId,
+          content: text,
+        });
+
+        await telegram.sendMessage(chatId, "Updated personality", {
+          disable_notification: true,
+        });
+
+        return "Updated personality, notified user. Continue function calls.";
       },
     }),
   };

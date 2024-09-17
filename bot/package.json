@@ -28,6 +28,8 @@
     "@mozilla/readability": "^0.5.0",
     "@paralleldrive/cuid2": "^2.2.2",
     "ai": "^3.3.9",
+    "chromadb": "^1.8.1",
+    "chromadb-default-embed": "^2.13.2",
     "drizzle-orm": "^0.33.0",
     "file-type": "^19.4.1",
     "form-data": "^4.0.0",
