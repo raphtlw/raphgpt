@@ -11,7 +11,7 @@ import Replicate from "replicate";
 import { pipeline as streamPipeline } from "stream/promises";
 import { encoding_for_model } from "tiktoken";
 import { z } from "zod";
-import { DATA_DIR } from "../bot/constants.js";
+import { DATA_DIR, OPENROUTER_FREE } from "../bot/constants.js";
 import logger from "../bot/logger.js";
 import { telegram } from "../bot/telegram.js";
 import { db, tables } from "../db/db.js";
@@ -384,7 +384,7 @@ export const mainFunctions = (
         logger.info("Publishing markdown to web");
 
         const { text: title } = await generateText({
-          model: openrouter("meta-llama/llama-3.1-8b-instruct:free"),
+          model: openrouter(OPENROUTER_FREE),
           system: "You are a helpful assistant.",
           prompt: [
             "Generate a suitable title for the following article:",
@@ -393,15 +393,22 @@ export const mainFunctions = (
           ].join("\n"),
         });
 
-        const insertResult = await db
-          .insert(tables.fullResponses)
-          .values({
-            title,
-            content: md,
+        const result = await got
+          .post("https://raphgpt.vercel.app/telegram", {
+            json: {
+              title: title,
+              content: md,
+            },
           })
-          .returning();
-        const published = insertResult[0];
-        return `Content published at ${getEnv("WEB_SITE_URL")}/telegram/${published.id}`;
+          .json()
+          .then((r) =>
+            z
+              .object({
+                rows: z.array(z.object({ id: z.number() })),
+              })
+              .parse(r),
+          );
+        return `Content published at ${getEnv("WEB_SITE_URL")}/telegram/${result.rows[0].id}`;
       },
     }),
 

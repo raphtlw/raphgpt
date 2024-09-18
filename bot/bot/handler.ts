@@ -750,7 +750,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     }
 
     const result = await got
-      .post("https://raphgpt.vercel.app/telegram", {
+      .post(`${getEnv("WEB_SITE_URL")}/telegram`, {
         json: {
           title: pageTitle,
           content: finalResponse,
@@ -768,7 +768,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       "Telegram limits message sizes, so I've published the message online.",
       "\n",
       "You can view the message at this URL: ",
-      `${process.env.WEB_SITE_URL}/telegram/${result.rows[0].id}`,
+      `${getEnv("WEB_SITE_URL")}/telegram/${result.rows[0].id}`,
     ]);
     await telegram.sendMessage(ctx.chatId, publishNotification.text, {
       entities: publishNotification.entities,
