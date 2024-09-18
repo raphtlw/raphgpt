@@ -17,12 +17,6 @@ export const users = pgTable("users", {
   credits: numeric("credits").default("0").notNull(),
 });
 
-export const fullResponses = pgTable("full_responses", {
-  id: serial("id").primaryKey(),
-  title: text("title"),
-  content: text("content").notNull(),
-});
-
 export const usage = pgTable(
   "usage",
   {

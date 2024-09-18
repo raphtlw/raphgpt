@@ -749,19 +749,26 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       pageTitle = "Bot Response";
     }
 
-    const insertResult = await db
-      .insert(tables.fullResponses)
-      .values({
-        title: pageTitle,
-        content: finalResponse,
+    const result = await got
+      .post("https://raphgpt.vercel.app/telegram", {
+        json: {
+          title: pageTitle,
+          content: finalResponse,
+        },
       })
-      .returning();
-    const published = insertResult[0];
+      .json()
+      .then((r) =>
+        z
+          .object({
+            rows: z.array(z.object({ id: z.number() })),
+          })
+          .parse(r),
+      );
     const publishNotification = fmt([
       "Telegram limits message sizes, so I've published the message online.",
       "\n",
       "You can view the message at this URL: ",
-      `${process.env.WEB_SITE_URL}/telegram/${published.id}`,
+      `${process.env.WEB_SITE_URL}/telegram/${result.rows[0].id}`,
     ]);
     await telegram.sendMessage(ctx.chatId, publishNotification.text, {
       entities: publishNotification.entities,
