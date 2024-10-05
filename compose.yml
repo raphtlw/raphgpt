@@ -38,7 +38,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   postgres:
-    image: postgres
+    image: postgres:16
     restart: always
     shm_size: 128mb
     environment:
