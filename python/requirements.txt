@@ -1,7 +1,0 @@
-fastapi[all]
-cuid2
-ffmpeg-python
-opencv-python
-numpy
-imutils
-transformers

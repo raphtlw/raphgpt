@@ -12,10 +12,7 @@ permissions:
 
 jobs:
   deploy:
-    strategy:
-      matrix:
-        service: [bot, python]
-    name: Deploy Telegram Bot Service
+    name: Deploy Telegram Bot
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,21 +27,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
-      - name: Build and push bot image
-        if: matrix.service == 'bot'
+      - name: Build and push docker image
         uses: docker/build-push-action@v6
         with:
-          context: ./bot
+          context: .
           push: true
           tags: ghcr.io/raphtlw/raphgpt:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Build and push python image
-        if: matrix.service == 'python'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./python
-          push: true
-          tags: ghcr.io/raphtlw/raphgpt-python:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
