@@ -33,7 +33,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { CoreMessage, generateText, UserContent } from "ai";
 import assert from "assert";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
-import { fileTypeFromFile } from "file-type";
+import { fileTypeFromBuffer } from "file-type";
 import FormData from "form-data";
 import fs from "fs";
 import { globby } from "globby";
@@ -383,9 +383,6 @@ commands.command("config", "Get basic settings", async (ctx) => {
 
 bot.use(commands);
 
-// Ignore all messages (for now)
-bot.on("message", async (ctx) => {});
-
 bot.on("message").filter(
   async (ctx) => {
     if (ctx.hasChatType("private")) {
@@ -622,7 +619,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           let textFilePaths = [];
 
           for (const filePath of filePaths) {
-            const binaryType = await fileTypeFromFile(filePath);
+            const binaryType = await fileTypeFromBuffer(
+              await fs.promises.readFile(filePath),
+            );
             if (!binaryType) {
               textFilePaths.push(filePath);
             }
