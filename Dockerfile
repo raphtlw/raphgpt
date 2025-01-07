@@ -30,24 +30,27 @@ ENV LANG=en_US.UTF-8
 RUN rm -f /etc/machine-id \
  && dbus-uuidgen --ensure=/etc/machine-id
 
+ENV HOME="/root"
+
 # Install Volta
 RUN curl https://get.volta.sh | bash
-ENV VOLTA_HOME="/root/.volta"
+ENV VOLTA_HOME="$HOME/.volta"
 ENV PATH="$VOLTA_HOME/bin:$PATH"
 
 # Install Node.js and PNPM
 RUN volta install node@latest
 RUN volta install pnpm@latest
-ENV PNPM_HOME="/root/.local/share/pnpm"
+ENV PNPM_HOME="$HOME/.local/share/pnpm"
 
 # Install Pyenv
 RUN curl https://pyenv.run | bash
-ENV PYENV_ROOT="/root/.pyenv"
-ENV PATH="$PYENV_ROOT/bin:$PATH"
+ENV PYENV_ROOT="$HOME/.pyenv"
+ENV PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
 
 # Install Python
-RUN pyenv install 3.12.0
-RUN pyenv global 3.12.0
+ENV PYTHON_VERSION=3.12.0
+RUN pyenv install $PYTHON_VERSION
+RUN pyenv global $PYTHON_VERSION
 
 # Set up the app
 COPY . /app
