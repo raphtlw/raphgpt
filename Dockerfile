@@ -65,4 +65,4 @@ RUN pnpm build
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the app
-ENTRYPOINT [ "/bin/sh", "-c", "/docker-entrypoint.sh" ]
+ENTRYPOINT [ "/docker-entrypoint.sh" ]
