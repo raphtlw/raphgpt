@@ -170,12 +170,12 @@ bot.callbackQuery("payment-method-solana", async (ctx) => {
         username: ctx.from.username,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
-        credits: 169,
+        credits: 69,
       })
       .returning()
       .get();
     await ctx.reply(
-      "Welcome to raphGPT! You have $1.69 in credits to start with",
+      "Welcome to raphGPT! You have 69 cents in credits to start with",
     );
   }
   assert(user, "Unable to retrieve user");
@@ -409,12 +409,12 @@ bot.on("message").filter(
           username: ctx.from.username,
           firstName: ctx.from.first_name,
           lastName: ctx.from.last_name,
-          credits: 169,
+          credits: 69,
         })
         .returning();
       user = inserted[0];
       await ctx.replyFmt(
-        fmt`${bold(`Welcome to raphGPT. You have $1.69 in credits to start with.`)}
+        fmt`${bold(`Welcome to raphGPT. You have 69 cents in credits to start with.`)}
 ${italic(`You can get more tokens from the store (/topup)`)}`,
       );
     } else {
