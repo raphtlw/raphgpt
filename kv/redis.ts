@@ -3,7 +3,7 @@ import { getEnv } from "@/helpers/env";
 import { createClient } from "redis";
 
 const client = createClient({
-  url: `redis://default:${getEnv("REDIS_PASSWORD")}@${getEnv("REDIS_HOST")}:${getEnv("REDIS_PORT")}`,
+  url: `redis://default:${getEnv("REDIS_PASSWORD")}@${getEnv("REDIS_HOST")}`,
 });
 
 client.on("error", (error) => logger.error(error, "Redis Client Error"));

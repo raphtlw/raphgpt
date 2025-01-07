@@ -547,13 +547,10 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           form.append("files", fs.createReadStream(file.localPath));
 
           const converted = await got
-            .post(
-              `${getEnv("GOTENBERG_HOST")}:${getEnv("GOTENBERG_PORT")}/forms/libreoffice/convert`,
-              {
-                body: form,
-                headers: {},
-              },
-            )
+            .post(`${getEnv("GOTENBERG_URL")}/forms/libreoffice/convert`, {
+              body: form,
+              headers: {},
+            })
             .buffer();
           const pdfPages = await pdf2pic.fromBuffer(converted).bulk(-1, {
             responseType: "buffer",

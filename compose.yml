@@ -14,7 +14,7 @@ services:
     image: redis
     restart: always
     ports:
-      - ${REDIS_PORT}:6379
+      - 30769:6379
     volumes:
       - redisdata:/data
     environment:
@@ -25,13 +25,13 @@ services:
     image: gotenberg/gotenberg:8
     restart: always
     ports:
-      - ${GOTENBERG_PORT}:3000
+      - 30770:3000
 
   chromadb:
     image: chromadb/chroma
     restart: always
     ports:
-      - ${CHROMA_PORT}:8000
+      - 30771:8000
 
 volumes:
   appdata:
