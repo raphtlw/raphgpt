@@ -383,9 +383,6 @@ commands.command("config", "Get basic settings", async (ctx) => {
 
 bot.use(commands);
 
-// Temporarily ignore messages
-bot.on("message", async (ctx) => {});
-
 bot.on("message").filter(
   async (ctx) => {
     if (ctx.hasChatType("private")) {
