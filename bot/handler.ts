@@ -548,7 +548,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
           const converted = await got
             .post(
-              `http://localhost:${getEnv("GOTENBERG_PORT")}/forms/libreoffice/convert`,
+              `${getEnv("GOTENBERG_HOST")}:${getEnv("GOTENBERG_PORT")}/forms/libreoffice/convert`,
               {
                 body: form,
                 headers: {},
