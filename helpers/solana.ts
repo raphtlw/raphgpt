@@ -2,7 +2,6 @@ import logger from "@/bot/logger.js";
 import { telegram } from "@/bot/telegram.js";
 import { db, tables } from "@/db/db.js";
 import { getEnv } from "@/helpers/env.js";
-import { kv } from "@/kv/redis.js";
 import { bold, fmt } from "@grammyjs/parse-mode";
 import { Raydium } from "@raydium-io/raydium-sdk-v2";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
@@ -35,19 +34,21 @@ export const getUSDCPrice = async () => {
   return averagePrice;
 };
 
+/**
+ * Only one instance should ever be running at any time
+ */
+let handleUserWalletBalanceChangeLock = false;
 export const handleUserWalletBalanceChange = async (
   user: typeof tables.users.$inferSelect & {
     solanaWallet: typeof tables.solanaWallets.$inferSelect;
   },
 ) => {
   // Lock this process
-  while (
-    (await kv.get(`${user.solanaWallet.id}:checking_token_balance`)) === "1"
-  ) {
+  while (handleUserWalletBalanceChangeLock) {
     logger.debug("Waiting for lock...");
     await sleep(100);
   }
-  await kv.set(`${user.solanaWallet.id}:checking_token_balance`, "1");
+  handleUserWalletBalanceChangeLock = true;
 
   // Check for dust
   const tokenAccountResponse =
@@ -96,5 +97,5 @@ export const handleUserWalletBalanceChange = async (
     });
   }
 
-  await kv.set(`${user.solanaWallet.id}:checking_token_balance`, "0");
+  handleUserWalletBalanceChangeLock = false;
 };
