@@ -912,7 +912,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     cost += usage.completionTokens * (10 / 1_000_000);
 
     // up to 50 cents in fees per message (the more tokens used, the less fees)
-    cost += cost + 0.4 / usage.completionTokens + 0.1;
+    cost += cost + 0.3 / usage.completionTokens + 0.2;
 
     cost /= Math.pow(10, 2); // Store value without 2 d.p.
 
