@@ -7,8 +7,6 @@ services:
     env_file:
       - path: stack.env
         required: false
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
 
   redis:
     image: redis
