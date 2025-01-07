@@ -945,15 +945,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     await collection.add({
       documents: [queryDocument.join("\n")],
       ids: [createId()],
-      metadatas: [
-        { chatId: ctx.chatId, messageId: ctx.msgId, role: "user", turnIdx },
-        {
-          chatId: ctx.chatId,
-          messageId: ctx.msgId,
-          role: "assistant",
-          turnIdx,
-        },
-      ],
+      metadatas: [{ chatId: ctx.chatId, messageId: ctx.msgId, turnIdx }],
     });
   },
 );
