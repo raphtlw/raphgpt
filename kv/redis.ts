@@ -1,9 +1,9 @@
+import logger from "@/bot/logger";
+import { getEnv } from "@/helpers/env";
 import { createClient } from "redis";
-import logger from "../bot/logger.js";
-import { getEnv } from "../helpers/env.js";
 
 const client = createClient({
-  url: `redis://default:${getEnv("REDIS_PASSWORD")}@${getEnv("REDIS_HOST")}`,
+  url: `redis://default:${getEnv("REDIS_PASSWORD")}@localhost:${getEnv("REDIS_PORT")}`,
 });
 
 client.on("error", (error) => logger.error(error, "Redis Client Error"));
