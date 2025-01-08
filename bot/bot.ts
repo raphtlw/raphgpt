@@ -83,14 +83,19 @@ bot.use(async (ctx, next) => {
             }
           }, TYPING_INDICATOR_DURATION);
         } else if (ctx.typing.interval) {
-          clearInterval(ctx.typing.interval!);
           controller.abort();
+          clearInterval(ctx.typing.interval);
         }
       },
     };
   }
 
   await next();
+
+  if (ctx.typing.interval) {
+    controller.abort();
+    clearInterval(ctx.typing.interval);
+  }
 });
 
 bot.catch(async ({ error, ctx, message }) => {

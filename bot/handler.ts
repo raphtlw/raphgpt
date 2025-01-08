@@ -397,6 +397,8 @@ bot.on("message").filter(
     return false;
   },
   async (ctx) => {
+    ctx.typing.indicator = true;
+
     let user = await db.query.users.findFirst({
       where: eq(tables.users.telegramId, ctx.from.id),
     });
