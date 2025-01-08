@@ -1,14 +1,23 @@
+import { TYPING_INDICATOR_DURATION } from "@/bot/constants";
 import logger from "@/bot/logger.js";
 import { db, tables } from "@/db/db.js";
 import { getEnv } from "@/helpers/env.js";
 import { handleUserWalletBalanceChange } from "@/helpers/solana.js";
 import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
 import { sequentialize } from "@grammyjs/runner";
+import AbortController from "abort-controller";
 import assert from "assert";
 import { isNotNull } from "drizzle-orm";
 import { Bot, Context, GrammyError, HttpError } from "grammy";
 
-const bot = new Bot<ParseModeFlavor<Context>>(getEnv("TELEGRAM_BOT_TOKEN"), {
+export type BotContext = ParseModeFlavor<Context> & {
+  typing: {
+    interval: NodeJS.Timeout | null;
+    indicator: boolean;
+  };
+};
+
+const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
   client: { apiRoot: getEnv("TELEGRAM_API_ROOT") },
 });
 
@@ -54,36 +63,38 @@ const checkWallets = async () => {
 walletActivityInterval = setInterval(checkWallets, 1 * 60 * 1000);
 checkWallets();
 
-// Typing indicator
-// let typingIndicatorInterval: NodeJS.Timeout;
+bot.use(async (ctx, next) => {
+  const controller = new AbortController();
 
-// bot.use(async (ctx, next) => {
-//   if (!ctx.msg) return;
-//   if (!ctx.msg.from) return;
+  if (!ctx.typing) {
+    ctx.typing = {
+      interval: null,
+      set indicator(enabled: boolean) {
+        if (enabled) {
+          ctx.typing.interval = setInterval(async () => {
+            if (ctx.typing.indicator) {
+              await ctx.replyWithChatAction(
+                "typing",
+                {
+                  message_thread_id: ctx.msg?.message_thread_id,
+                },
+                controller.signal,
+              );
+            }
+          }, TYPING_INDICATOR_DURATION);
+        } else if (ctx.typing.interval) {
+          clearInterval(ctx.typing.interval!);
+          controller.abort();
+        }
+      },
+    };
+  }
 
-//   if (
-//     !(
-//       ctx.hasChatType("private") ||
-//       (ctx.msg.from.id === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()) &&
-//         ctx.msg.text?.startsWith("-bot "))
-//     )
-//   )
-//     return;
-
-//   await ctx.replyWithChatAction("typing", {
-//     message_thread_id: ctx.msg?.message_thread_id,
-//   });
-//   typingIndicatorInterval = setInterval(async () => {
-//     await ctx.replyWithChatAction("typing", {
-//       message_thread_id: ctx.msg?.message_thread_id,
-//     });
-//   }, 5 * 1000);
-//   await next();
-//   clearInterval(typingIndicatorInterval);
-// });
+  await next();
+});
 
 bot.catch(async ({ error, ctx, message }) => {
-  // clearInterval(typingIndicatorInterval);
+  if (ctx.typing.interval) clearInterval(ctx.typing.interval);
   logger.error(error, `Error while handling update ${ctx.update.update_id}`);
   if (error instanceof GrammyError) {
     logger.error(`Error in request: ${error.description}`);

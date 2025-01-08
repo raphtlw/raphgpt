@@ -10,3 +10,5 @@ export const PROMPTS_DIR = path.join(process.cwd(), "prompts");
 export const PRODUCTION = getEnv("NODE_ENV") === "production";
 
 export const OPENROUTER_FREE = "nousresearch/hermes-3-llama-3.1-405b:free";
+
+export const TYPING_INDICATOR_DURATION = 5 * 1000;
