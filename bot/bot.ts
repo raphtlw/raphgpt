@@ -11,9 +11,10 @@ import { isNotNull } from "drizzle-orm";
 import { Bot, Context, GrammyError, HttpError } from "grammy";
 
 export type BotContext = ParseModeFlavor<Context> & {
-  typing: {
+  typingIndicator: {
+    enable: (enabled: boolean) => Promise<void>;
     interval: NodeJS.Timeout | null;
-    indicator: boolean;
+    controller: AbortController;
   };
 };
 
@@ -63,43 +64,49 @@ const checkWallets = async () => {
 walletActivityInterval = setInterval(checkWallets, 1 * 60 * 1000);
 checkWallets();
 
+// Typing indicator
 bot.use(async (ctx, next) => {
-  const controller = new AbortController();
-
-  if (!ctx.typing) {
-    ctx.typing = {
-      interval: null,
-      set indicator(enabled: boolean) {
-        if (enabled) {
-          ctx.typing.interval = setInterval(async () => {
-            if (ctx.typing.indicator) {
-              await ctx.replyWithChatAction(
-                "typing",
-                {
-                  message_thread_id: ctx.msg?.message_thread_id,
-                },
-                controller.signal,
-              );
-            }
-          }, TYPING_INDICATOR_DURATION);
-        } else if (ctx.typing.interval) {
-          controller.abort();
-          clearInterval(ctx.typing.interval);
+  ctx.typingIndicator = {
+    interval: null,
+    controller: new AbortController(),
+    async enable(enabled) {
+      if (enabled) {
+        ctx.typingIndicator.interval = setInterval(async () => {
+          await ctx.replyWithChatAction(
+            "typing",
+            {
+              message_thread_id: ctx.msg?.message_thread_id,
+            },
+            ctx.typingIndicator.controller.signal,
+          );
+        }, TYPING_INDICATOR_DURATION);
+        await ctx.replyWithChatAction(
+          "typing",
+          {
+            message_thread_id: ctx.msg?.message_thread_id,
+          },
+          ctx.typingIndicator.controller.signal,
+        );
+      } else {
+        if (ctx.typingIndicator.interval) {
+          ctx.typingIndicator.controller.abort();
+          clearInterval(ctx.typingIndicator.interval);
         }
-      },
-    };
-  }
+      }
+    },
+  };
 
   await next();
 
-  if (ctx.typing.interval) {
-    controller.abort();
-    clearInterval(ctx.typing.interval);
-  }
+  await ctx.typingIndicator.enable(false);
 });
 
 bot.catch(async ({ error, ctx, message }) => {
-  if (ctx.typing.interval) clearInterval(ctx.typing.interval);
+  if (ctx.typingIndicator.interval) {
+    ctx.typingIndicator.controller.abort();
+    clearInterval(ctx.typingIndicator.interval);
+  }
+
   logger.error(error, `Error while handling update ${ctx.update.update_id}`);
   if (error instanceof GrammyError) {
     logger.error(`Error in request: ${error.description}`);

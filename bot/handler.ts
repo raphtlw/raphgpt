@@ -397,7 +397,7 @@ bot.on("message").filter(
     return false;
   },
   async (ctx) => {
-    ctx.typing.indicator = true;
+    await ctx.typingIndicator.enable(true);
 
     let user = await db.query.users.findFirst({
       where: eq(tables.users.telegramId, ctx.from.id),
@@ -783,27 +783,26 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     // Send final response to user
     if (ctx.msg.voice || ctx.msg.video_note) {
-      const { text: toSpeak, usage: voiceUsage } = await generateText({
-        model: openrouter(OPENROUTER_FREE),
-        prompt: await buildPrompt("speech", {
-          originalQuery: ctx.msg.text,
-          output: finalResponse,
-        }),
-      });
-
-      logger.info(`To be spoken (formatted): "${toSpeak}"`);
-
       const openai = new OpenAI();
-      const mp3 = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "shimmer",
-        input: toSpeak,
+      const mp3completion = await openai.chat.completions.create({
+        model: "gpt-4o-audio-preview",
+        modalities: ["text", "audio"],
+        audio: { voice: "alloy", format: "mp3" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Please read out the message in an upbeat response. Do not exclude any important information.",
+          },
+          { role: "user", content: `Read this out: ${finalResponse}` },
+        ],
       });
       const fileId = createId();
       const spokenPath = path.join(DATA_DIR, `voice-${fileId}.mp3`);
       await fs.promises.writeFile(
         spokenPath,
-        Buffer.from(await mp3.arrayBuffer()),
+        Buffer.from(mp3completion.choices[0].message.audio!.data, "base64"),
+        { encoding: "utf-8" },
       );
       const outputPath = path.join(DATA_DIR, `voice-${fileId}.ogg`);
       await runCommand(
@@ -945,7 +944,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     logger.debug(`Saving to chromadb: ${queryDocument}`);
 
     await collection.add({
-      documents: [queryDocument.join("\n")],
+      documents: [queryDocument.join(" ")],
       ids: [createId()],
       metadatas: [{ chatId: ctx.chatId, messageId: ctx.msgId, turnIdx }],
     });
