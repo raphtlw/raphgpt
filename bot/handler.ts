@@ -912,7 +912,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     // 50% will be taken as fees
     cost += (cost / 100) * 50;
 
-    cost /= Math.pow(10, 2); // Store value without 2 d.p.
+    cost *= Math.pow(10, 2); // Store value without 2 d.p.
 
     // Subtract credits from user
     await db
