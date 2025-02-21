@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { getEnv } from "./env.js";
+import { getEnv } from "@/helpers/env.js";
 
 export const openrouter = createOpenAI({
   baseURL: "https://openrouter.ai/api/v1",

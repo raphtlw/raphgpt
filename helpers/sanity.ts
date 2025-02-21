@@ -1,6 +1,6 @@
 import { createClient } from "@sanity/client";
 import { format } from "date-fns";
-import { getEnv } from "./env.js";
+import { getEnv } from "@/helpers/env.js";
 
 export const sanity = createClient({
   projectId: getEnv("SANITY_PROJECT_ID"),

@@ -1,7 +1,7 @@
+import { getEnv } from "@/helpers/env.js";
 import got from "got";
-import { getEnv } from "./env.js";
 
-export const callPython = async <P, R extends unknown = any>(
+export const callPython = async <P, R = any>(
   procedure: string,
   payload: P,
 ): Promise<R> => {

@@ -1,6 +1,16 @@
+import { DATA_DIR } from "@/bot/constants.js";
+import logger from "@/bot/logger.js";
+import { telegram } from "@/bot/telegram.js";
+import { db, tables } from "@/db/db.js";
+import { BROWSER } from "@/helpers/browser.js";
+import { getEnv } from "@/helpers/env.js";
+import { ToolData } from "@/helpers/function";
+import { convertHtmlToMarkdown } from "@/helpers/markdown.js";
+import { runModel } from "@/helpers/replicate.js";
+import { runCommand } from "@/helpers/shell.js";
 import { bold, fmt, italic } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
-import { generateText, tool } from "ai";
+import { tool } from "ai";
 import { eq } from "drizzle-orm";
 import fs from "fs";
 import got from "got";
@@ -11,22 +21,15 @@ import Replicate from "replicate";
 import { pipeline as streamPipeline } from "stream/promises";
 import { encoding_for_model } from "tiktoken";
 import { z } from "zod";
-import { DATA_DIR, OPENROUTER_FREE } from "../bot/constants.js";
-import logger from "../bot/logger.js";
-import { telegram } from "../bot/telegram.js";
-import { db, tables } from "../db/db.js";
-import { BROWSER } from "../helpers/browser.js";
-import { getEnv } from "../helpers/env.js";
-import { convertHtmlToMarkdown } from "../helpers/markdown.js";
-import { openrouter } from "../helpers/openrouter.js";
-import { runModel } from "../helpers/replicate.js";
-import { runCommand } from "../helpers/shell.js";
 
-export const mainFunctions = (
-  userId: number,
-  chatId: number,
-  msgId: number,
-) => {
+/**
+ * A set of functions which are included in every LLM call.
+ *
+ * These are the most essential for interacting with Telegram
+ * and therefore, have to be as streamlined and useful
+ * as possible.
+ */
+export const mainFunctions = (data: ToolData) => {
   return {
     search_google: tool({
       description:
@@ -148,9 +151,9 @@ export const mainFunctions = (
           `ffmpeg -i ${spokenPath} -acodec libopus -filter:a "volume=4dB" ${outputPath}`,
         );
 
-        await telegram.sendVoice(chatId, new InputFile(outputPath), {
+        await telegram.sendVoice(data.chatId, new InputFile(outputPath), {
           reply_parameters: {
-            message_id: msgId,
+            message_id: data.msgId,
           },
         });
 
@@ -160,104 +163,6 @@ export const mainFunctions = (
         ]);
 
         return "Voice message sent to user.";
-      },
-    }),
-
-    sing_song: tool({
-      description: "Generates a song using AI.",
-      parameters: z.object({
-        prompt: z
-          .string()
-          .describe("Melody description, how it should be played."),
-        lyrics: z
-          .string()
-          .describe(
-            "Song lyrics with descriptive melody tags. Do not label sections.",
-          ),
-      }),
-      async execute({ prompt, lyrics }) {
-        const fileId = createId();
-        const lyricsPath = `lyrics-${fileId}.wav`;
-        const musicPath = `music-${fileId}.wav`;
-        const resultPath = `output-${fileId}.mp3`;
-        const replicate = new Replicate();
-        const lyricsOut = await replicate
-          .run(
-            "suno-ai/bark:b76242b40d67c76ab6742e987628a2a9ac019e11d56ab96c4e91ce03b79b2787",
-            {
-              input: {
-                prompt: lyrics,
-                text_temp: 0.7,
-                waveform_temp: 0.7,
-                history_prompt: "fr_speaker_1",
-              },
-            },
-          )
-          .then((o) =>
-            z
-              .object({
-                audio_out: z.string(),
-              })
-              .parse(o),
-          );
-        await streamPipeline(
-          got.stream(lyricsOut.audio_out),
-          fs.createWriteStream(lyricsPath),
-        );
-        const duration = await runCommand(
-          `ffprobe -v error -select_streams a:0 -show_format -show_streams ${lyricsPath}`,
-        );
-        logger.debug({ duration }, "FFprobe output");
-        const durationAsString = duration.stdout.match(
-          /duration="?(\d*\.\d*)"?/,
-        );
-        if (durationAsString && durationAsString[1]) {
-          const fduration = parseFloat(durationAsString[1]);
-          const musicOut = await replicate
-            .run(
-              "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
-              {
-                input: {
-                  prompt,
-                  duration: Math.ceil(fduration),
-                  temperature: 1,
-                  continuation: false,
-                  model_version: "stereo-large",
-                  output_format: "wav",
-                  continuation_start: 0,
-                  multi_band_diffusion: false,
-                  normalization_strategy: "peak",
-                  classifier_free_guidance: 3,
-                },
-              },
-            )
-            .then((o) => z.string().parse(o));
-          await streamPipeline(
-            got.stream(musicOut),
-            fs.createWriteStream(musicPath),
-          );
-
-          // Downmix each input into single output channel
-          await runCommand(
-            `ffmpeg -i ${lyricsPath} -i ${musicPath} -filter_complex amix=inputs=2:duration=longest ${resultPath}`,
-          );
-
-          await telegram.sendAudio(chatId, new InputFile(resultPath), {
-            reply_parameters: {
-              message_id: msgId,
-            },
-          });
-
-          await Promise.all([
-            fs.promises.rm(lyricsPath, { recursive: true, force: true }),
-            fs.promises.rm(musicPath, { recursive: true, force: true }),
-            fs.promises.rm(resultPath, { recursive: true, force: true }),
-          ]);
-
-          return "Voice message sent to user.";
-        } else {
-          return "Unable to detect song duration, aborted. Do not try again.";
-        }
       },
     }),
 
@@ -362,53 +267,16 @@ export const mainFunctions = (
 
         const caption = fmt([fmt`\n${bold("Prompt")}: ${italic(prompt)}`]);
 
-        await telegram.sendPhoto(chatId, output[0], {
+        await telegram.sendPhoto(data.chatId, output[0], {
           caption: caption.text,
           caption_entities: caption.entities,
           reply_parameters: {
-            message_id: msgId,
+            message_id: data.msgId,
             allow_sending_without_reply: true,
           },
         });
 
         return output;
-      },
-    }),
-
-    publish_markdown: tool({
-      description: "Upload Markdown text as file, returns a URL pointing to it",
-      parameters: z.object({
-        md: z.string(),
-      }),
-      async execute({ md }) {
-        logger.info("Publishing markdown to web");
-
-        const { text: title } = await generateText({
-          model: openrouter(OPENROUTER_FREE),
-          system: "You are a helpful assistant.",
-          prompt: [
-            "Generate a suitable title for the following article:",
-            md,
-            "Reply only with the title and nothing else.",
-          ].join("\n"),
-        });
-
-        const result = await got
-          .post("https://raphgpt.vercel.app/telegram", {
-            json: {
-              title: title,
-              content: md,
-            },
-          })
-          .json()
-          .then((r) =>
-            z
-              .object({
-                rows: z.array(z.object({ id: z.number() })),
-              })
-              .parse(r),
-          );
-        return `Content published at ${getEnv("WEB_SITE_URL")}/telegram/${result.rows[0].id}`;
       },
     }),
 
@@ -456,16 +324,16 @@ export const mainFunctions = (
         text: z
           .string()
           .describe(
-            "What to remember to alter my behavior when responding to future messages, in plain text",
+            "What to remember to alter my behavior when responding to future messages",
           ),
       }),
       async execute({ text }) {
         await db.insert(tables.personality).values({
-          userId,
+          userId: data.userId,
           content: text,
         });
 
-        await telegram.sendMessage(chatId, "Updated personality", {
+        await telegram.sendMessage(data.chatId, `Updated memory: ${text}`, {
           disable_notification: true,
         });
 

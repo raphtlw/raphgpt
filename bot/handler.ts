@@ -105,7 +105,7 @@ commands.command("balance", "Check account balance", async (ctx) => {
   if (!readUserId) return await ctx.reply("User ID not specified");
 
   const user = await db.query.users.findFirst({
-    where: eq(tables.users.telegramId, readUserId),
+    where: eq(tables.users.userId, readUserId),
   });
 
   if (!user) return await ctx.reply("User not found");
@@ -159,14 +159,14 @@ type PaymentMethodData = {
 bot.callbackQuery("payment-method-solana", async (ctx) => {
   // Create user if they don't exist till now
   let user = await db.query.users.findFirst({
-    where: eq(tables.users.telegramId, ctx.from.id),
+    where: eq(tables.users.userId, ctx.from.id),
   });
   if (!user) {
     user = await db
       .insert(tables.users)
       .values({
         chatId: ctx.chatId!,
-        telegramId: ctx.from.id,
+        userId: ctx.from.id,
         username: ctx.from.username,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
@@ -225,7 +225,7 @@ bot.callbackQuery("payment-method-solana", async (ctx) => {
 
       const user = await db.query.users.findFirst({
         where: and(
-          eq(tables.users.telegramId, ctx.from.id),
+          eq(tables.users.userId, ctx.from.id),
           isNotNull(tables.users.solanaWallet),
         ),
         with: {
@@ -309,7 +309,7 @@ bot.on("msg:successful_payment", async (ctx) => {
     .set({
       credits: sql`${tables.users.credits} + ${pendingPayment}`,
     })
-    .where(eq(tables.users.telegramId, ctx.from.id))
+    .where(eq(tables.users.userId, ctx.from.id))
     .returning()
     .get();
 
@@ -400,14 +400,14 @@ bot.on("message").filter(
     await ctx.typingIndicator.enable(true);
 
     let user = await db.query.users.findFirst({
-      where: eq(tables.users.telegramId, ctx.from.id),
+      where: eq(tables.users.userId, ctx.from.id),
     });
     if (!user) {
       const inserted = await db
         .insert(tables.users)
         .values({
           chatId: ctx.chatId,
-          telegramId: ctx.from.id,
+          userId: ctx.from.id,
           username: ctx.from.username,
           firstName: ctx.from.first_name,
           lastName: ctx.from.last_name,
@@ -427,7 +427,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           firstName: ctx.from.first_name,
           lastName: ctx.from.last_name,
         })
-        .where(eq(tables.users.telegramId, ctx.from.id))
+        .where(eq(tables.users.userId, ctx.from.id))
         .returning();
       user = updated[0];
     }
@@ -437,7 +437,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     // Excluding TELEGRAM_BOT_OWNER
     if (
       user.credits <= 0 &&
-      user.telegramId !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())
+      user.userId !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())
     ) {
       return await ctx.reply(
         "You have run out of credits! Use /topup to get more.",
@@ -615,7 +615,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
           logger.info(filePaths, "Unzipped files");
 
-          let textFilePaths = [];
+          const textFilePaths = [];
 
           for (const filePath of filePaths) {
             const binaryType = await fileTypeFromBuffer(
@@ -705,7 +705,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     logger.debug(`Relevant info: ${inspect(relevantDocuments)}`);
 
     // For each document, get the original message turn
-    let messages: CoreMessage[] = [];
+    const messages: CoreMessage[] = [];
     for (const metadata of relevantDocuments.metadatas[0]) {
       assert(metadata, "Metadata is null");
       const relevantTurn = (
@@ -755,7 +755,12 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       usage,
     } = await generateText({
       model: openai("gpt-4o"),
-      tools: mainFunctions(user.id, ctx.chatId, ctx.msgId),
+      tools: mainFunctions({
+        userId: user.userId!,
+        chatId: ctx.chatId,
+        msgId: ctx.msgId,
+        dbUser: user.id,
+      }),
       system: await buildPrompt("system", {
         me: JSON.stringify(await telegram.getMe()),
         date: new Date().toLocaleString(),
@@ -920,7 +925,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .set({
         credits: sql`${tables.users.credits} - ${cost}`,
       })
-      .where(eq(tables.users.telegramId, ctx.from.id));
+      .where(eq(tables.users.userId, ctx.from.id));
 
     logger.debug({ cost }, "Deducted credits");
 

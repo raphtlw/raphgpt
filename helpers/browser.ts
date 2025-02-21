@@ -1,8 +1,8 @@
+import { BROWSER_FILES_DIR } from "@/bot/constants.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import puppeteer from "puppeteer";
-import { BROWSER_FILES_DIR } from "../bot/constants.js";
 
 const isProd = process.env.NODE_ENV === "production";
 

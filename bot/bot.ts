@@ -47,7 +47,6 @@ bot.use(async (ctx, next) => {
 });
 
 // Handle wallet activity
-let walletActivityInterval: NodeJS.Timeout;
 const checkWallets = async () => {
   const users = await db.query.users.findMany({
     where: isNotNull(tables.users.solanaWallet),
@@ -61,7 +60,7 @@ const checkWallets = async () => {
     await handleUserWalletBalanceChange(user as any);
   }
 };
-walletActivityInterval = setInterval(checkWallets, 1 * 60 * 1000);
+const walletActivityInterval = setInterval(checkWallets, 1 * 60 * 1000);
 checkWallets();
 
 // Typing indicator
@@ -105,6 +104,10 @@ bot.catch(async ({ error, ctx, message }) => {
   if (ctx.typingIndicator.interval) {
     ctx.typingIndicator.controller.abort();
     clearInterval(ctx.typingIndicator.interval);
+  }
+
+  if (walletActivityInterval) {
+    clearInterval(walletActivityInterval);
   }
 
   logger.error(error, `Error while handling update ${ctx.update.update_id}`);

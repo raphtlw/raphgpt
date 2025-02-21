@@ -6,9 +6,9 @@ import got from "got";
 import { Api, Context } from "grammy";
 import path from "path";
 import { pipeline as streamPipeline } from "stream/promises";
-import { getEnv } from "../helpers/env.js";
-import { LOCAL_FILES_DIR } from "./constants.js";
-import logger from "./logger.js";
+import { getEnv } from "@/helpers/env.js";
+import { LOCAL_FILES_DIR } from "@/bot/constants.js";
+import logger from "@/bot/logger.js";
 
 export const telegram = new Api(getEnv("TELEGRAM_BOT_TOKEN"));
 

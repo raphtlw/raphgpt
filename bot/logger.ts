@@ -1,8 +1,8 @@
 import { pino } from "pino";
 import type { LokiOptions } from "pino-loki";
 import type { PrettyOptions } from "pino-pretty";
-import { getEnv } from "../helpers/env.js";
-import { PRODUCTION } from "./constants.js";
+import { getEnv } from "@/helpers/env.js";
+import { PRODUCTION } from "@/bot/constants.js";
 
 export default pino(
   { level: "trace" },

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { kv } from "../kv/redis.js";
-import logger from "./logger.js";
+import { kv } from "@/kv/redis.js";
+import logger from "@/bot/logger.js";
 
 const whisperLanguages = [
   "auto",
