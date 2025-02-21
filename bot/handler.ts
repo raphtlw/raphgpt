@@ -1,6 +1,11 @@
 import { bot } from "@/bot/bot.js";
 import { configSchema, getConfigValue } from "@/bot/config.js";
-import { DATA_DIR, LOCAL_FILES_DIR, OPENROUTER_FREE } from "@/bot/constants.js";
+import {
+  DATA_DIR,
+  LOCAL_FILES_DIR,
+  OPENROUTER_FREE,
+  WHISPER_LANGUAGES,
+} from "@/bot/constants.js";
 import logger from "@/bot/logger.js";
 import { downloadFile, telegram } from "@/bot/telegram.js";
 import { chroma } from "@/db/chroma.js";
@@ -459,34 +464,130 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     if (ctx.msg.voice) {
       const file = await downloadFile(ctx);
       const result = await runModel(
-        "openai/whisper:cdd97b257f93cb89dede1c7584e3f3dfc969571b357dbcee08e793740bedd854",
+        "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
+        z.object({
+          task: z
+            .enum(["transcribe", "translate"])
+            .describe(
+              "Task to perform: transcribe or translate to another language.",
+            )
+            .default("transcribe"),
+          audio: z.string().url().describe("Audio file"),
+          hf_token: z
+            .string()
+            .describe(
+              "Provide a hf.co/settings/token for Pyannote.audio to diarise the audio clips. You need to agree to the terms in 'https://huggingface.co/pyannote/speaker-diarization-3.1' and 'https://huggingface.co/pyannote/segmentation-3.0' first.",
+            )
+            .optional(),
+          language: z
+            .enum(WHISPER_LANGUAGES)
+            .describe(
+              "Language spoken in the audio, specify 'None' to perform language detection.",
+            )
+            .default("None"),
+          timestamp: z
+            .enum(["chunk", "word"])
+            .describe(
+              "Whisper supports both chunked as well as word level timestamps.",
+            )
+            .default("chunk"),
+          batch_size: z
+            .number()
+            .int()
+            .describe(
+              "Number of parallel batches you want to compute. Reduce if you face OOMs.",
+            )
+            .default(24),
+          diarise_audio: z
+            .boolean()
+            .describe(
+              "Use Pyannote.audio to diarise the audio clips. You will need to provide hf_token below too.",
+            )
+            .default(false),
+        }),
+        z.object({
+          text: z.string(),
+          chunks: z.array(
+            z.object({
+              text: z.string(),
+              timestamp: z.tuple([z.number(), z.number()]), // Ensures exactly two numbers in the array
+            }),
+          ),
+        }),
         {
           audio: file.remoteUrl,
-          language: getConfigValue(ctx.from.id, "language"),
+          task: "transcribe",
+          timestamp: "chunk",
+          batch_size: 48,
+          diarise_audio: false,
+          language: await getConfigValue(ctx.from.id, "language"),
         },
-        z.object({
-          segments: z.array(z.unknown()),
-          transcription: z.string(),
-          detected_language: z.string(),
-        }),
       );
       logger.debug(result, "Transcription");
 
-      toSend.push({ type: "text", text: result.transcription });
+      toSend.push({ type: "text", text: result.text });
     }
     if (ctx.msg.video_note) {
       const file = await downloadFile(ctx);
       const result = await runModel(
-        "openai/whisper:cdd97b257f93cb89dede1c7584e3f3dfc969571b357dbcee08e793740bedd854",
+        "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
+        z.object({
+          task: z
+            .enum(["transcribe", "translate"])
+            .describe(
+              "Task to perform: transcribe or translate to another language.",
+            )
+            .default("transcribe"),
+          audio: z.string().url().describe("Audio file"),
+          hf_token: z
+            .string()
+            .describe(
+              "Provide a hf.co/settings/token for Pyannote.audio to diarise the audio clips. You need to agree to the terms in 'https://huggingface.co/pyannote/speaker-diarization-3.1' and 'https://huggingface.co/pyannote/segmentation-3.0' first.",
+            )
+            .optional(),
+          language: z
+            .enum(WHISPER_LANGUAGES)
+            .describe(
+              "Language spoken in the audio, specify 'None' to perform language detection.",
+            )
+            .default("None"),
+          timestamp: z
+            .enum(["chunk", "word"])
+            .describe(
+              "Whisper supports both chunked as well as word level timestamps.",
+            )
+            .default("chunk"),
+          batch_size: z
+            .number()
+            .int()
+            .describe(
+              "Number of parallel batches you want to compute. Reduce if you face OOMs.",
+            )
+            .default(24),
+          diarise_audio: z
+            .boolean()
+            .describe(
+              "Use Pyannote.audio to diarise the audio clips. You will need to provide hf_token below too.",
+            )
+            .default(false),
+        }),
+        z.object({
+          text: z.string(),
+          chunks: z.array(
+            z.object({
+              text: z.string(),
+              timestamp: z.tuple([z.number(), z.number()]), // Ensures exactly two numbers in the array
+            }),
+          ),
+        }),
         {
           audio: file.remoteUrl,
-          language: getConfigValue(ctx.from.id, "language"),
+          task: "transcribe",
+          timestamp: "chunk",
+          batch_size: 48,
+          diarise_audio: false,
+          language: await getConfigValue(ctx.from.id, "language"),
         },
-        z.object({
-          segments: z.array(z.unknown()),
-          transcription: z.string(),
-          detected_language: z.string(),
-        }),
       );
       logger.debug(result, "Transcription");
 
@@ -506,10 +607,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           image: await fs.promises.readFile(result.frame.path),
         });
       }
-      toSend.push({
-        type: "text",
-        text: result.transcription,
-      });
+      toSend.push({ type: "text", text: result.text });
     }
     if (ctx.msg.photo) {
       const file = await downloadFile(ctx);

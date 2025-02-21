@@ -244,10 +244,12 @@ export const mainFunctions = (data: ToolData) => {
           "1:1",
           "16:9",
           "21:9",
-          "2:3",
           "3:2",
+          "2:3",
           "4:5",
           "5:4",
+          "3:4",
+          "4:3",
           "9:16",
           "9:21",
         ]),
@@ -256,13 +258,80 @@ export const mainFunctions = (data: ToolData) => {
         logger.info({ prompt, aspect_ratio }, "Generating image using FLUX");
         const output = await runModel(
           "black-forest-labs/flux-schnell",
+          z.object({
+            seed: z
+              .number()
+              .int()
+              .describe("Random seed. Set for reproducible generation")
+              .optional(),
+            prompt: z.string().describe("Prompt for generated image"),
+            go_fast: z
+              .boolean()
+              .describe(
+                "Run faster predictions with model optimized for speed (currently fp8 quantized); disable to run in original bf16",
+              )
+              .default(true),
+            megapixels: z
+              .enum(["1", "0.25"])
+              .describe("Approximate number of megapixels for generated image")
+              .default("1"),
+            num_outputs: z
+              .number()
+              .int()
+              .gte(1)
+              .lte(4)
+              .describe("Number of outputs to generate")
+              .default(1),
+            aspect_ratio: z
+              .enum([
+                "1:1",
+                "16:9",
+                "21:9",
+                "3:2",
+                "2:3",
+                "4:5",
+                "5:4",
+                "3:4",
+                "4:3",
+                "9:16",
+                "9:21",
+              ])
+              .describe("Aspect ratio for the generated image")
+              .default("1:1"),
+            output_format: z
+              .enum(["webp", "jpg", "png"])
+              .describe("Format of the output images")
+              .default("webp"),
+            output_quality: z
+              .number()
+              .int()
+              .gte(0)
+              .lte(100)
+              .describe(
+                "Quality when saving the output images, from 0 to 100. 100 is best quality, 0 is lowest quality. Not relevant for .png outputs",
+              )
+              .default(80),
+            num_inference_steps: z
+              .number()
+              .int()
+              .gte(1)
+              .lte(4)
+              .describe(
+                "Number of denoising steps. 4 is recommended, and lower number of steps produce lower quality outputs, faster.",
+              )
+              .default(4),
+            disable_safety_checker: z
+              .boolean()
+              .describe("Disable safety checker for generated images.")
+              .default(false),
+          }),
+          z.array(z.string()),
           {
             prompt,
             num_outputs: 1,
             aspect_ratio,
             output_format: "png",
           },
-          z.array(z.string()),
         );
 
         const caption = fmt([fmt`\n${bold("Prompt")}: ${italic(prompt)}`]);
