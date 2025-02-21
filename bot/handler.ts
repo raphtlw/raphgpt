@@ -6,7 +6,9 @@ import { downloadFile, telegram } from "@/bot/telegram.js";
 import { chroma } from "@/db/chroma.js";
 import { db, tables } from "@/db/db.js";
 import { mainFunctions } from "@/functions/main.js";
+import { toolbox } from "@/functions/toolbox";
 import { getEnv } from "@/helpers/env.js";
+import { ToolData } from "@/helpers/function";
 import { openrouter } from "@/helpers/openrouter.js";
 import { buildPrompt } from "@/helpers/prompts.js";
 import { callPython } from "@/helpers/python.js";
@@ -749,18 +751,35 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       content: toSend,
     });
 
+    const toolData: ToolData = {
+      userId: user.userId!,
+      chatId: ctx.chatId,
+      msgId: ctx.msgId,
+      dbUser: user.id,
+    };
+
+    const toolQuery: string[] = [];
+
+    for (const part of toSend) {
+      if (typeof part === "string") {
+        toolQuery.push(part);
+      } else if (part.type === "text") {
+        toolQuery.push(part.text);
+      } else if (part.type === "file") {
+        toolQuery.push(`File type: ${part.mimeType}`);
+      }
+    }
+
     const {
       text: finalResponse,
       response,
       usage,
     } = await generateText({
       model: openai("gpt-4o"),
-      tools: mainFunctions({
-        userId: user.userId!,
-        chatId: ctx.chatId,
-        msgId: ctx.msgId,
-        dbUser: user.id,
-      }),
+      tools: {
+        ...mainFunctions(toolData),
+        ...(await toolbox(toolData, toolQuery.join(" "))),
+      },
       system: await buildPrompt("system", {
         me: JSON.stringify(await telegram.getMe()),
         date: new Date().toLocaleString(),

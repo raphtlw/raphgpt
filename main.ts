@@ -1,9 +1,18 @@
 import { DATA_DIR, LOCAL_FILES_DIR } from "@/bot/constants.js";
 import { bot } from "@/bot/handler.js";
 import logger from "@/bot/logger.js";
+import { chroma } from "@/db/chroma";
 import { BROWSER } from "@/helpers/browser.js";
 import { run } from "@grammyjs/runner";
 import fs from "fs";
+
+const cleanup = async () => {
+  await BROWSER.close();
+  logger.info("Browser closed");
+
+  await chroma.deleteCollection({ name: "toolbox" });
+  logger.info("Temporary chroma collection deleted");
+};
 
 // Register exception handlers
 process.on("uncaughtException", async (err) => {
@@ -15,8 +24,7 @@ process.on("uncaughtException", async (err) => {
     process.abort(); // exit immediately and generate a core dump file
   }, 2000).unref();
 
-  await BROWSER.close();
-  logger.info("Browser closed");
+  await cleanup();
 
   process.exit(1);
 });
@@ -24,7 +32,7 @@ process.on("uncaughtException", async (err) => {
 process.on("SIGTERM", async (err) => {
   logger.info(err, "Terminating...");
 
-  await BROWSER.close();
+  await cleanup();
 
   process.exit(1);
 });
@@ -45,3 +53,6 @@ await handle.task();
 logger.info("Bot done processing!");
 
 await handle.stop();
+
+// cleanup
+await cleanup();
