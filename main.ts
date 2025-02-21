@@ -10,8 +10,12 @@ const cleanup = async () => {
   await BROWSER.close();
   logger.info("Browser closed");
 
-  await chroma.deleteCollection({ name: "toolbox" });
-  logger.info("Temporary chroma collection deleted");
+  try {
+    await chroma.deleteCollection({ name: "toolbox" });
+    logger.info("Temporary chroma collection deleted");
+  } catch {
+    logger.info("Nothing to delete");
+  }
 };
 
 // Register exception handlers

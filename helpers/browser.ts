@@ -1,5 +1,6 @@
 import { BROWSER_FILES_DIR } from "@/bot/constants.js";
 import fs from "fs";
+import isWsl from "is-wsl";
 import os from "os";
 import path from "path";
 import puppeteer from "puppeteer";
@@ -8,7 +9,7 @@ const isProd = process.env.NODE_ENV === "production";
 
 // launch browser
 export const BROWSER = await puppeteer.launch({
-  headless: isProd,
+  headless: isProd || isWsl,
   defaultViewport: null,
   waitForInitialPage: false,
   userDataDir: isProd

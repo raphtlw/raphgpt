@@ -211,6 +211,7 @@ bot.callbackQuery("payment-method-solana", async (ctx) => {
     user = await db
       .update(tables.users)
       .set({ solanaWallet: wallet.id })
+      .where(eq(tables.users.id, user.id))
       .returning()
       .get();
   }
@@ -868,6 +869,8 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       }
     }
 
+    logger.debug(toolQuery, "Search query for toolbox");
+
     const {
       text: finalResponse,
       response,
@@ -879,7 +882,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         ...(await toolbox(toolData, toolQuery.join(" "))),
       },
       system: await buildPrompt("system", {
-        me: JSON.stringify(await telegram.getMe()),
+        me: JSON.stringify(ctx.me),
         date: new Date().toLocaleString(),
         language: await getConfigValue(ctx.from.id, "language"),
         personality: (
@@ -905,25 +908,39 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     // Send final response to user
     if (ctx.msg.voice || ctx.msg.video_note) {
+      const file = await downloadFile(ctx);
+      const inputFileId = createId();
+      const inputFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+      await runCommand(`ffmpeg -i ${file.localPath} ${inputFilePath}`);
       const openai = new OpenAI();
-      const mp3completion = await openai.chat.completions.create({
+      const audioCompletion = await openai.chat.completions.create({
         model: "gpt-4o-audio-preview",
         modalities: ["text", "audio"],
         audio: { voice: "alloy", format: "mp3" },
         messages: [
           {
-            role: "system",
-            content:
-              "Please read out the message in an upbeat response. Do not exclude any important information.",
+            role: "user",
+            content: [
+              {
+                type: "input_audio",
+                input_audio: {
+                  data: await fs.promises.readFile(inputFilePath, {
+                    encoding: "base64",
+                  }),
+                  format: "mp3",
+                },
+              },
+            ],
           },
-          { role: "user", content: `Read this out: ${finalResponse}` },
+          { role: "assistant", content: finalResponse },
         ],
+        store: true,
       });
       const fileId = createId();
       const spokenPath = path.join(DATA_DIR, `voice-${fileId}.mp3`);
       await fs.promises.writeFile(
         spokenPath,
-        Buffer.from(mp3completion.choices[0].message.audio!.data, "base64"),
+        Buffer.from(audioCompletion.choices[0].message.audio!.data, "base64"),
         { encoding: "utf-8" },
       );
       const outputPath = path.join(DATA_DIR, `voice-${fileId}.ogg`);
@@ -941,6 +958,8 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         },
       );
 
+      await fs.promises.rm(file.localPath);
+      await fs.promises.rm(inputFilePath);
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
     }

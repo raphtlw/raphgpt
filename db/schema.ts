@@ -9,7 +9,7 @@ export const users = sqliteTable("users", {
   firstName: text("first_name"),
   lastName: text("last_name"),
   credits: integer("credits").default(0).notNull(),
-  solanaWallet: integer("solana_wallet_id"),
+  solanaWallet: integer("solana_wallet_id").unique(),
 });
 
 export const usersRelations = relations(users, ({ one }) => ({
@@ -30,9 +30,7 @@ export const personality = sqliteTable("personality", {
 
 export const solanaWallets = sqliteTable("solana_wallets", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  owner: integer("owner_id")
-    .notNull()
-    .references(() => users.solanaWallet),
+  owner: integer("owner_id").notNull(),
   secretKey: text("private_key").notNull(),
   publicKey: text("public_key").notNull(),
   balanceLamports: integer("balance_lamports").notNull(),

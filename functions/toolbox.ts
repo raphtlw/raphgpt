@@ -3,17 +3,19 @@ import { telegram } from "@/bot/telegram";
 import { chroma } from "@/db/chroma";
 import { ToolData } from "@/helpers/function";
 import { tool } from "ai";
-import { Collection } from "chromadb";
+import { Collection, DefaultEmbeddingFunction } from "chromadb";
 import { z } from "zod";
 
 export const toolbox = async (data: ToolData, query: string | string[]) => {
+  const embeddingFunction = new DefaultEmbeddingFunction();
+
   const tools = {
     blockchain_data: tool({
       description: "Analyze the solana blockchain",
       parameters: z.object({}),
       async execute() {
         logger.debug("tool triggered");
-        telegram.sendMessage(data.chatId, "boom");
+        await telegram.sendMessage(data.chatId, "boom");
 
         return "ack";
       },
@@ -23,10 +25,16 @@ export const toolbox = async (data: ToolData, query: string | string[]) => {
   let toolCollection: Collection;
 
   try {
-    toolCollection = await chroma.getCollection({ name: "toolbox" } as any);
+    toolCollection = await chroma.getCollection({
+      name: "toolbox",
+      embeddingFunction,
+    });
   } catch {
-    toolCollection = await chroma.createCollection({ name: "toolbox" });
-    toolCollection.add({
+    toolCollection = await chroma.createCollection({
+      name: "toolbox",
+      embeddingFunction,
+    });
+    await toolCollection.add({
       ids: Object.keys(tools),
       metadatas: Object.entries(tools).map(([name, tool]) => ({
         name,
@@ -43,6 +51,7 @@ export const toolbox = async (data: ToolData, query: string | string[]) => {
 
   const toUse = await toolCollection.query({
     queryTexts: Array.isArray(query) ? query : [query],
+    include: ["metadatas"] as any,
   });
 
   // Ensure metadata exists and is structured properly

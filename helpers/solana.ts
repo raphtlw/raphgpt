@@ -6,7 +6,7 @@ import { bold, fmt } from "@grammyjs/parse-mode";
 import { Raydium } from "@raydium-io/raydium-sdk-v2";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { sleep } from "openai/core.mjs";
 import { inspect } from "util";
 
@@ -90,11 +90,17 @@ export const handleUserWalletBalanceChange = async (
       .set({
         credits: sql`${tables.users.credits} + ${receivedSol * usdcPrice}`,
       })
+      .where(eq(tables.users.id, user.id))
       .returning()
       .get();
-    await db.update(tables.solanaWallets).set({
-      balanceLamports: balance,
-    });
+    await db
+      .update(tables.solanaWallets)
+      .set({
+        balanceLamports: balance,
+      })
+      .where(eq(tables.solanaWallets.owner, user.id))
+      .returning()
+      .get();
   }
 
   handleUserWalletBalanceChangeLock = false;
