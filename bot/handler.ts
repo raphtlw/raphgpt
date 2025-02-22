@@ -459,6 +459,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const toSend: UserContent = [];
     const remindingSystemPrompt: string[] = [];
 
+    let hasImages = false;
+    let audioFile: string | undefined;
+
     if (ctx.msg.text) {
       toSend.push({ type: "text", text: ctx.msg.text });
     }
@@ -527,9 +530,20 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       logger.debug(result, "Transcription");
 
       toSend.push({ type: "text", text: result.text });
+
+      const inputFileId = createId();
+      const inputFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+      await runCommand(`ffmpeg -i ${file.localPath} ${inputFilePath}`);
+      audioFile = inputFilePath;
     }
     if (ctx.msg.video_note) {
+      hasImages = true;
       const file = await downloadFile(ctx);
+      const inputFileId = createId();
+      const inputFilePath = path.join(DATA_DIR, `vn-audio-${inputFileId}.mp3`);
+      await runCommand(`ffmpeg -i ${file.localPath} ${inputFilePath}`);
+      audioFile = inputFilePath;
+
       const result = await runModel(
         "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
         z.object({
@@ -539,7 +553,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
               "Task to perform: transcribe or translate to another language.",
             )
             .default("transcribe"),
-          audio: z.string().url().describe("Audio file"),
+          audio: z.any(),
           hf_token: z
             .string()
             .describe(
@@ -582,7 +596,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           ),
         }),
         {
-          audio: file.remoteUrl,
+          audio: await fs.promises.readFile(inputFilePath),
           task: "transcribe",
           timestamp: "chunk",
           batch_size: 48,
@@ -611,6 +625,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       toSend.push({ type: "text", text: result.text });
     }
     if (ctx.msg.photo) {
+      hasImages = true;
       const file = await downloadFile(ctx);
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
@@ -621,6 +636,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
     }
     if (ctx.msg.document) {
+      hasImages = true;
       const file = await downloadFile(ctx);
       if (file.fileType) {
         if (file.fileType.ext === "pdf") {
@@ -771,6 +787,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
     }
     if (ctx.msg.sticker) {
+      hasImages = true;
       const file = await downloadFile(ctx);
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
@@ -876,7 +893,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       response,
       usage,
     } = await generateText({
-      model: openai("o3-mini", { structuredOutputs: false }),
+      model: hasImages
+        ? openai("gpt-4o")
+        : openai("o3-mini", { structuredOutputs: false }),
       tools: {
         ...mainFunctions(toolData),
         ...(await toolbox(toolData, toolQuery.join(" "))),
@@ -908,10 +927,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     // Send final response to user
     if (ctx.msg.voice || ctx.msg.video_note) {
-      const file = await downloadFile(ctx);
-      const inputFileId = createId();
-      const inputFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
-      await runCommand(`ffmpeg -i ${file.localPath} ${inputFilePath}`);
+      assert(audioFile, "Audio file not generated!");
       const openai = new OpenAI();
       const audioCompletion = await openai.chat.completions.create({
         model: "gpt-4o-audio-preview",
@@ -919,12 +935,17 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         audio: { voice: "alloy", format: "mp3" },
         messages: [
           {
+            role: "developer",
+            content:
+              "Repeat the text response in a tone best suited for the original user query. DO NOT HALUCINATE and DO NOT STOP UNNECESSARILY",
+          },
+          {
             role: "user",
             content: [
               {
                 type: "input_audio",
                 input_audio: {
-                  data: await fs.promises.readFile(inputFilePath, {
+                  data: await fs.promises.readFile(audioFile, {
                     encoding: "base64",
                   }),
                   format: "mp3",
@@ -958,8 +979,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         },
       );
 
-      await fs.promises.rm(file.localPath);
-      await fs.promises.rm(inputFilePath);
+      await fs.promises.rm(audioFile);
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
     }
