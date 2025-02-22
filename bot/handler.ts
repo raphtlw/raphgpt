@@ -876,7 +876,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       response,
       usage,
     } = await generateText({
-      model: openai("o3-mini"),
+      model: openai("o3-mini", { structuredOutputs: false }),
       tools: {
         ...mainFunctions(toolData),
         ...(await toolbox(toolData, toolQuery.join(" "))),
