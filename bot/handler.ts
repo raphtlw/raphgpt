@@ -876,7 +876,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       response,
       usage,
     } = await generateText({
-      model: openai("gpt-4o"),
+      model: openai("o3-mini"),
       tools: {
         ...mainFunctions(toolData),
         ...(await toolbox(toolData, toolQuery.join(" "))),
@@ -982,7 +982,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
       try {
         // limit content length to fit context size for model
-        const enc = encoding_for_model("gpt-4o");
+        const enc = encoding_for_model("o3-mini");
         const tok = enc.encode(finalResponse);
         const lim = tok.slice(0, 1024);
         const txt = new TextDecoder().decode(enc.decode(lim));
