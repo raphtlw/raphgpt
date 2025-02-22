@@ -7,7 +7,7 @@ export const configSchema = z.object({
   language: z
     .enum(WHISPER_LANGUAGES)
     .describe("Preferred language to use. Set 'None' to automatically detect")
-    .default("None"),
+    .default("english"),
   messagehistsize: z
     .number()
     .min(0)
