@@ -419,5 +419,55 @@ export const mainFunctions = (data: ToolData) => {
       parameters: z.object({ expression: z.string() }),
       execute: async ({ expression }) => mathjs.evaluate(expression),
     }),
+
+    publish_mdx: tool({
+      description: "Publish a webpage with MDX content",
+      parameters: z.object({
+        title: z.string().describe("Title of webpage"),
+        content: z.string(),
+      }),
+      async execute({ title, content }) {
+        const result = await got
+          .post(`${getEnv("RAPHTLW_URL")}/api/raphgpt/document`, {
+            json: {
+              title,
+              content,
+            },
+            headers: {
+              Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
+            },
+          })
+          .json()
+          .then((r) =>
+            z
+              .object({
+                doc: z.object({
+                  _createdAt: z.string().datetime(),
+                  _id: z.string(),
+                  _rev: z.string(),
+                  _type: z.literal("raphgptPage"),
+                  _updatedAt: z.string().datetime(),
+                  content: z.string(),
+                  publishedAt: z.string().datetime(),
+                  title: z.string(),
+                }),
+              })
+              .parse(r),
+          );
+        const publishNotification = fmt([
+          "I've published a new webpage.",
+          "\n",
+          "You can view it at this URL: ",
+          `${getEnv("RAPHTLW_URL")}/api/raphgpt/document/${result.doc._id}`,
+        ]);
+        await telegram.sendMessage(data.chatId, publishNotification.text, {
+          entities: publishNotification.entities,
+          reply_parameters: {
+            message_id: data.msgId,
+            allow_sending_without_reply: true,
+          },
+        });
+      },
+    }),
   };
 };
