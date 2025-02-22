@@ -60,7 +60,7 @@ WORKDIR /app
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 
 # Install dependencies
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm pnpm install --frozen-lockfile
 RUN pnpm build
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -70,8 +70,13 @@
   "type": "module",
   "pnpm": {
     "onlyBuiltDependencies": [
+      "bigint-buffer",
+      "bufferutil",
       "esbuild",
-      "puppeteer"
+      "protobufjs",
+      "puppeteer",
+      "sharp",
+      "utf-8-validate"
     ]
   }
 }
