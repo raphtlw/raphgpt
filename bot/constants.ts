@@ -1,7 +1,8 @@
 import { getEnv } from "@/helpers/env.js";
+import os from "os";
 import path from "path";
 
-export const DATA_DIR = path.resolve(getEnv("DATA_DIR"));
+export const DATA_DIR = path.join(os.homedir(), ".local", "share", "raphgpt");
 export const LOCAL_FILES_DIR = path.join(DATA_DIR, "files");
 export const BROWSER_FILES_DIR = path.join(DATA_DIR, "browser");
 

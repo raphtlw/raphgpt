@@ -3,14 +3,18 @@ import logger from "@/bot/logger.js";
 import { db, tables } from "@/db/db.js";
 import { getEnv } from "@/helpers/env.js";
 import { handleUserWalletBalanceChange } from "@/helpers/solana.js";
+import { openai } from "@ai-sdk/openai";
 import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
 import { sequentialize } from "@grammyjs/runner";
 import AbortController from "abort-controller";
+import { LanguageModel } from "ai";
 import assert from "assert";
 import { isNotNull } from "drizzle-orm";
 import { Bot, Context, GrammyError, HttpError } from "grammy";
 
 export type BotContext = ParseModeFlavor<Context> & {
+  model: LanguageModel;
+
   typingIndicator: {
     enable: (enabled: boolean) => Promise<void>;
     interval: NodeJS.Timeout | null;
@@ -43,6 +47,18 @@ bot.use(async (ctx, next) => {
 });
 bot.use(async (ctx, next) => {
   logger.debug({ update: ctx.update }, "Update Received");
+  await next();
+});
+bot.use(async (ctx, next) => {
+  ctx.model = openai("o3-mini", { structuredOutputs: false });
+
+  if (
+    ctx.msg &&
+    (ctx.msg.photo || ctx.msg.document || ctx.msg.video || ctx.msg.sticker)
+  ) {
+    ctx.model = openai("gpt-4o");
+  }
+
   await next();
 });
 

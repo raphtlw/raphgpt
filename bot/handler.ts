@@ -25,7 +25,6 @@ import {
 } from "@/helpers/solana.js";
 import { superjson } from "@/helpers/superjson.js";
 import { kv } from "@/kv/redis.js";
-import { openai } from "@ai-sdk/openai";
 import { CommandGroup } from "@grammyjs/commands";
 import {
   bold,
@@ -51,7 +50,7 @@ import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
 import telegramifyMarkdown from "telegramify-markdown";
-import { encoding_for_model } from "tiktoken";
+import { encoding_for_model, TiktokenModel } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
 
@@ -459,7 +458,6 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const toSend: UserContent = [];
     const remindingSystemPrompt: string[] = [];
 
-    let hasImages = false;
     let audioFile: string | undefined;
 
     if (ctx.msg.text) {
@@ -537,7 +535,6 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       audioFile = inputFilePath;
     }
     if (ctx.msg.video_note) {
-      hasImages = true;
       const file = await downloadFile(ctx);
       const inputFileId = createId();
       const inputFilePath = path.join(DATA_DIR, `vn-audio-${inputFileId}.mp3`);
@@ -625,7 +622,6 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       toSend.push({ type: "text", text: result.text });
     }
     if (ctx.msg.photo) {
-      hasImages = true;
       const file = await downloadFile(ctx);
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
@@ -636,7 +632,6 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
     }
     if (ctx.msg.document) {
-      hasImages = true;
       const file = await downloadFile(ctx);
       if (file.fileType) {
         if (file.fileType.ext === "pdf") {
@@ -787,7 +782,6 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
     }
     if (ctx.msg.sticker) {
-      hasImages = true;
       const file = await downloadFile(ctx);
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
@@ -893,9 +887,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       response,
       usage,
     } = await generateText({
-      model: hasImages
-        ? openai("gpt-4o")
-        : openai("o3-mini", { structuredOutputs: false }),
+      model: ctx.model,
       tools: {
         ...mainFunctions(toolData),
         ...(await toolbox(toolData, toolQuery.join(" "))),
@@ -1002,7 +994,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
       try {
         // limit content length to fit context size for model
-        const enc = encoding_for_model("o3-mini");
+        const enc = encoding_for_model(ctx.model.modelId as TiktokenModel);
         const tok = enc.encode(finalResponse);
         const lim = tok.slice(0, 1024);
         const txt = new TextDecoder().decode(enc.decode(lim));

@@ -43,11 +43,10 @@ process.on("SIGTERM", async (err) => {
 
 // Create working directories
 if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
-
 if (!fs.existsSync(LOCAL_FILES_DIR)) {
-  fs.mkdirSync(LOCAL_FILES_DIR);
+  fs.mkdirSync(LOCAL_FILES_DIR, { recursive: true });
 }
 
 const handle = run(bot);
