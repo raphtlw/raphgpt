@@ -102,14 +102,13 @@ bot.use(async (ctx, next) => {
   };
 
   await next();
-
-  await ctx.typingIndicator.enable(false);
 });
 
 bot.use(async (ctx, next) => {
   const before = Date.now();
   await next();
   const after = Date.now();
+  await ctx.typingIndicator.enable(false);
 
   logger.debug(
     { before, after, duration: after - before },

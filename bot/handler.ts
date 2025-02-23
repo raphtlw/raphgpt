@@ -39,6 +39,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { CoreMessage, generateText, UserContent } from "ai";
 import assert from "assert";
+import axios from "axios";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { fileTypeFromBuffer } from "file-type";
 import FormData from "form-data";
@@ -996,38 +997,40 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         pageTitle = "Bot Response";
       }
 
-      const result = await got
-        .post(`${getEnv("RAPHTLW_URL")}/api/raphgpt/document`, {
-          json: {
-            title: pageTitle,
-            content: finalResponse,
-          },
-          headers: {
-            Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
-          },
-        })
-        .json()
-        .then((r) =>
-          z
-            .object({
-              doc: z.object({
-                _createdAt: z.string().datetime(),
-                _id: z.string(),
-                _rev: z.string(),
-                _type: z.literal("raphgptPage"),
-                _updatedAt: z.string().datetime(),
-                content: z.string(),
-                publishedAt: z.string().datetime(),
-                title: z.string(),
-              }),
-            })
-            .parse(r),
-        );
+      const result = await axios({
+        method: "post",
+        url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
+        headers: {
+          Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          title: pageTitle,
+          content: finalResponse,
+        },
+      }).then((response) =>
+        z
+          .object({
+            doc: z.object({
+              _createdAt: z.string().datetime(),
+              _id: z.string(),
+              _rev: z.string(),
+              _type: z.literal("raphgptPage"),
+              _updatedAt: z.string().datetime(),
+              content: z.string(),
+              publishedAt: z.string().datetime(),
+              title: z.string(),
+            }),
+          })
+          .parse(response.data),
+      );
+
+      const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
       const publishNotification = fmt([
         "Telegram limits message sizes, so I've published the message online.",
         "\n",
         "You can view the message at this URL: ",
-        `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`,
+        url,
       ]);
       await telegram.sendMessage(ctx.chatId, publishNotification.text, {
         entities: publishNotification.entities,

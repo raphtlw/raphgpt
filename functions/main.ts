@@ -11,6 +11,7 @@ import { runCommand } from "@/helpers/shell.js";
 import { bold, fmt, italic } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { tool } from "ai";
+import axios from "axios";
 import { eq } from "drizzle-orm";
 import fs from "fs";
 import got from "got";
@@ -427,39 +428,41 @@ export const mainFunctions = (data: ToolData) => {
         content: z.string(),
       }),
       async execute({ title, content }) {
-        const result = await got
-          .post(`${getEnv("RAPHTLW_URL")}/api/raphgpt/document`, {
-            json: {
-              title,
-              content,
-            },
-            headers: {
-              Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
-            },
-          })
-          .json()
-          .then((r) =>
-            z
-              .object({
-                doc: z.object({
-                  _createdAt: z.string().datetime(),
-                  _id: z.string(),
-                  _rev: z.string(),
-                  _type: z.literal("raphgptPage"),
-                  _updatedAt: z.string().datetime(),
-                  content: z.string(),
-                  publishedAt: z.string().datetime(),
-                  title: z.string(),
-                }),
-              })
-              .parse(r),
-          );
+        const result = await axios({
+          method: "post",
+          url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
+          headers: {
+            Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          data: {
+            title,
+            content,
+          },
+        }).then((response) =>
+          z
+            .object({
+              doc: z.object({
+                _createdAt: z.string().datetime(),
+                _id: z.string(),
+                _rev: z.string(),
+                _type: z.literal("raphgptPage"),
+                _updatedAt: z.string().datetime(),
+                content: z.string(),
+                publishedAt: z.string().datetime(),
+                title: z.string(),
+              }),
+            })
+            .parse(response.data),
+        );
+
+        const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
 
         const publishNotification = fmt([
           "I've published a new webpage.",
           "\n",
           "You can view it at this URL: ",
-          `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`,
+          url,
         ]);
         await telegram.sendMessage(data.chatId, publishNotification.text, {
           entities: publishNotification.entities,
@@ -469,7 +472,7 @@ export const mainFunctions = (data: ToolData) => {
           },
         });
 
-        return `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
+        return url;
       },
     }),
   };
