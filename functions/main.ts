@@ -454,11 +454,12 @@ export const mainFunctions = (data: ToolData) => {
               })
               .parse(r),
           );
+
         const publishNotification = fmt([
           "I've published a new webpage.",
           "\n",
           "You can view it at this URL: ",
-          `${getEnv("RAPHTLW_URL")}/api/raphgpt/document/${result.doc._id}`,
+          `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`,
         ]);
         await telegram.sendMessage(data.chatId, publishNotification.text, {
           entities: publishNotification.entities,
@@ -467,6 +468,8 @@ export const mainFunctions = (data: ToolData) => {
             allow_sending_without_reply: true,
           },
         });
+
+        return `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
       },
     }),
   };

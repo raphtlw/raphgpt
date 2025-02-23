@@ -1027,7 +1027,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         "Telegram limits message sizes, so I've published the message online.",
         "\n",
         "You can view the message at this URL: ",
-        `${getEnv("RAPHTLW_URL")}/api/raphgpt/document/${result.doc._id}`,
+        `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`,
       ]);
       await telegram.sendMessage(ctx.chatId, publishNotification.text, {
         entities: publishNotification.entities,
