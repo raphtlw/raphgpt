@@ -25,6 +25,7 @@ import {
 } from "@/helpers/solana.js";
 import { superjson } from "@/helpers/superjson.js";
 import { kv } from "@/kv/redis.js";
+import { openai } from "@ai-sdk/openai";
 import { CommandGroup } from "@grammyjs/commands";
 import {
   bold,
@@ -458,168 +459,118 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const toSend: UserContent = [];
     const remindingSystemPrompt: string[] = [];
 
-    let audioFile: string | undefined;
+    let audioFilePath: string | undefined;
+
+    const transcribeAudio = async () => {
+      if (ctx.msg.voice || ctx.msg.video_note || ctx.msg.video) {
+        const file = await downloadFile(ctx);
+        const inputFileId = createId();
+        audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+        await runCommand(`ffmpeg -i ${file.localPath} ${audioFilePath}`);
+
+        logger.debug(`ffmpeg generated audio file: ${audioFilePath}`);
+
+        const result = await runModel(
+          "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
+          z.object({
+            task: z
+              .enum(["transcribe", "translate"])
+              .describe(
+                "Task to perform: transcribe or translate to another language.",
+              )
+              .default("transcribe"),
+            audio: z.any(),
+            hf_token: z
+              .string()
+              .describe(
+                "Provide a hf.co/settings/token for Pyannote.audio to diarise the audio clips. You need to agree to the terms in 'https://huggingface.co/pyannote/speaker-diarization-3.1' and 'https://huggingface.co/pyannote/segmentation-3.0' first.",
+              )
+              .optional(),
+            language: z
+              .enum(WHISPER_LANGUAGES)
+              .describe(
+                "Language spoken in the audio, specify 'None' to perform language detection.",
+              )
+              .default("None"),
+            timestamp: z
+              .enum(["chunk", "word"])
+              .describe(
+                "Whisper supports both chunked as well as word level timestamps.",
+              )
+              .default("chunk"),
+            batch_size: z
+              .number()
+              .int()
+              .describe(
+                "Number of parallel batches you want to compute. Reduce if you face OOMs.",
+              )
+              .default(24),
+            diarise_audio: z
+              .boolean()
+              .describe(
+                "Use Pyannote.audio to diarise the audio clips. You will need to provide hf_token below too.",
+              )
+              .default(false),
+          }),
+          z.object({
+            text: z.string(),
+            chunks: z.array(
+              z.object({
+                text: z.string(),
+                timestamp: z.tuple([z.number(), z.number()]), // Ensures exactly two numbers in the array
+              }),
+            ),
+          }),
+          {
+            audio: await fs.promises.readFile(audioFilePath!),
+            task: "transcribe",
+            timestamp: "chunk",
+            batch_size: 48,
+            diarise_audio: false,
+            language: await getConfigValue(ctx.from.id, "language"),
+          },
+        );
+        logger.debug(result, "Transcription");
+        return result;
+      }
+      assert(
+        false,
+        "Cannot call this function when there is no audio to transcribe",
+      );
+    };
 
     if (ctx.msg.text) {
       toSend.push({ type: "text", text: ctx.msg.text });
     }
     if (ctx.msg.voice) {
-      const file = await downloadFile(ctx);
-      const result = await runModel(
-        "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
-        z.object({
-          task: z
-            .enum(["transcribe", "translate"])
-            .describe(
-              "Task to perform: transcribe or translate to another language.",
-            )
-            .default("transcribe"),
-          audio: z.string().url().describe("Audio file"),
-          hf_token: z
-            .string()
-            .describe(
-              "Provide a hf.co/settings/token for Pyannote.audio to diarise the audio clips. You need to agree to the terms in 'https://huggingface.co/pyannote/speaker-diarization-3.1' and 'https://huggingface.co/pyannote/segmentation-3.0' first.",
-            )
-            .optional(),
-          language: z
-            .enum(WHISPER_LANGUAGES)
-            .describe(
-              "Language spoken in the audio, specify 'None' to perform language detection.",
-            )
-            .default("None"),
-          timestamp: z
-            .enum(["chunk", "word"])
-            .describe(
-              "Whisper supports both chunked as well as word level timestamps.",
-            )
-            .default("chunk"),
-          batch_size: z
-            .number()
-            .int()
-            .describe(
-              "Number of parallel batches you want to compute. Reduce if you face OOMs.",
-            )
-            .default(24),
-          diarise_audio: z
-            .boolean()
-            .describe(
-              "Use Pyannote.audio to diarise the audio clips. You will need to provide hf_token below too.",
-            )
-            .default(false),
-        }),
-        z.object({
-          text: z.string(),
-          chunks: z.array(
-            z.object({
-              text: z.string(),
-              timestamp: z.tuple([z.number(), z.number()]), // Ensures exactly two numbers in the array
-            }),
-          ),
-        }),
-        {
-          audio: file.remoteUrl,
-          task: "transcribe",
-          timestamp: "chunk",
-          batch_size: 48,
-          diarise_audio: false,
-          language: await getConfigValue(ctx.from.id, "language"),
-        },
-      );
-      logger.debug(result, "Transcription");
+      const result = await transcribeAudio();
+      assert(result, "No transcript found");
 
       toSend.push({ type: "text", text: result.text });
-
-      const inputFileId = createId();
-      const inputFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
-      await runCommand(`ffmpeg -i ${file.localPath} ${inputFilePath}`);
-      audioFile = inputFilePath;
     }
-    if (ctx.msg.video_note) {
+    if (ctx.msg.video_note || ctx.msg.video) {
       const file = await downloadFile(ctx);
-      const inputFileId = createId();
-      const inputFilePath = path.join(DATA_DIR, `vn-audio-${inputFileId}.mp3`);
-      await runCommand(`ffmpeg -i ${file.localPath} ${inputFilePath}`);
-      audioFile = inputFilePath;
 
-      const result = await runModel(
-        "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
-        z.object({
-          task: z
-            .enum(["transcribe", "translate"])
-            .describe(
-              "Task to perform: transcribe or translate to another language.",
-            )
-            .default("transcribe"),
-          audio: z.any(),
-          hf_token: z
-            .string()
-            .describe(
-              "Provide a hf.co/settings/token for Pyannote.audio to diarise the audio clips. You need to agree to the terms in 'https://huggingface.co/pyannote/speaker-diarization-3.1' and 'https://huggingface.co/pyannote/segmentation-3.0' first.",
-            )
-            .optional(),
-          language: z
-            .enum(WHISPER_LANGUAGES)
-            .describe(
-              "Language spoken in the audio, specify 'None' to perform language detection.",
-            )
-            .default("None"),
-          timestamp: z
-            .enum(["chunk", "word"])
-            .describe(
-              "Whisper supports both chunked as well as word level timestamps.",
-            )
-            .default("chunk"),
-          batch_size: z
-            .number()
-            .int()
-            .describe(
-              "Number of parallel batches you want to compute. Reduce if you face OOMs.",
-            )
-            .default(24),
-          diarise_audio: z
-            .boolean()
-            .describe(
-              "Use Pyannote.audio to diarise the audio clips. You will need to provide hf_token below too.",
-            )
-            .default(false),
-        }),
-        z.object({
-          text: z.string(),
-          chunks: z.array(
-            z.object({
-              text: z.string(),
-              timestamp: z.tuple([z.number(), z.number()]), // Ensures exactly two numbers in the array
-            }),
-          ),
-        }),
-        {
-          audio: await fs.promises.readFile(inputFilePath),
-          task: "transcribe",
-          timestamp: "chunk",
-          batch_size: 48,
-          diarise_audio: false,
-          language: await getConfigValue(ctx.from.id, "language"),
-        },
-      );
-      logger.debug(result, "Transcription");
-
-      const selectedFrames = await callPython("processVideo", {
+      const transcribe = transcribeAudio();
+      const selectFrames = callPython("processVideo", {
         file_path: file.localPath,
         lang: "en",
       });
+
+      const results = await Promise.all([transcribe, selectFrames]);
 
       remindingSystemPrompt.push(
         "You have been given periodic frames from a video. Frames with the least amount of blur were extracted.",
         "When responding, pretend you have watched a video.",
         "To avoid confusing the user, do not say they are images.",
       );
-      for (const result of selectedFrames) {
+      for (const result of results[1]) {
         toSend.push({
           type: "image",
           image: await fs.promises.readFile(result.frame.path),
         });
       }
-      toSend.push({ type: "text", text: result.text });
+      toSend.push({ type: "text", text: results[0].text });
     }
     if (ctx.msg.photo) {
       const file = await downloadFile(ctx);
@@ -882,6 +833,18 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     logger.debug(toolQuery, "Search query for toolbox");
 
+    logger.debug(`Determining model type`);
+
+    for (const message of messages) {
+      if (
+        typeof message.content !== "string" &&
+        message.content.find((part) => part.type === "image")
+      ) {
+        ctx.model = openai("gpt-4o");
+        break;
+      }
+    }
+
     const {
       text: finalResponse,
       response,
@@ -919,8 +882,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     // Send final response to user
     if (ctx.msg.voice || ctx.msg.video_note) {
-      assert(audioFile, "Audio file not generated!");
+      assert(audioFilePath, "Audio file not generated!");
       const openai = new OpenAI();
+      const fakeToolCallId = createId();
       const audioCompletion = await openai.chat.completions.create({
         model: "gpt-4o-audio-preview",
         modalities: ["text", "audio"],
@@ -929,7 +893,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           {
             role: "developer",
             content:
-              "Repeat the text response in a tone best suited for the original user query. DO NOT HALUCINATE and DO NOT STOP UNNECESSARILY",
+              "Be as helpful as possible, and pleasant to listen to. You will not be interrupted. DO NOT HALUCINATE",
           },
           {
             role: "user",
@@ -937,7 +901,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
               {
                 type: "input_audio",
                 input_audio: {
-                  data: await fs.promises.readFile(audioFile, {
+                  data: await fs.promises.readFile(audioFilePath, {
                     encoding: "base64",
                   }),
                   format: "mp3",
@@ -945,7 +909,24 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
               },
             ],
           },
-          { role: "assistant", content: finalResponse },
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                id: fakeToolCallId,
+                type: "function",
+                function: {
+                  name: "get_llm_response",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            tool_call_id: fakeToolCallId,
+            content: finalResponse,
+          },
         ],
         store: true,
       });
@@ -958,7 +939,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       );
       const outputPath = path.join(DATA_DIR, `voice-${fileId}.ogg`);
       await runCommand(
-        `ffmpeg -i ${spokenPath} -acodec libopus -filter:a "volume=6dB" ${outputPath}`,
+        `ffmpeg -i ${spokenPath} -acodec libopus -filter:a "volume=10dB" ${outputPath}`,
       );
 
       await telegram.sendVoice(
@@ -971,7 +952,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         },
       );
 
-      await fs.promises.rm(audioFile);
+      await fs.promises.rm(audioFilePath);
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
     }

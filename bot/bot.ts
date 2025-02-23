@@ -36,16 +36,6 @@ bot.use(
   }),
 );
 bot.use(async (ctx, next) => {
-  const before = Date.now();
-  await next();
-  const after = Date.now();
-
-  logger.debug(
-    { before, after, duration: after - before },
-    `Time taken to respond: ${after - before}ms (${(after - before) / 1000}s)`,
-  );
-});
-bot.use(async (ctx, next) => {
   logger.debug({ update: ctx.update }, "Update Received");
   await next();
 });
@@ -114,6 +104,17 @@ bot.use(async (ctx, next) => {
   await next();
 
   await ctx.typingIndicator.enable(false);
+});
+
+bot.use(async (ctx, next) => {
+  const before = Date.now();
+  await next();
+  const after = Date.now();
+
+  logger.debug(
+    { before, after, duration: after - before },
+    `Time taken to respond: ${after - before}ms (${(after - before) / 1000}s)`,
+  );
 });
 
 bot.catch(async ({ error, ctx, message }) => {
