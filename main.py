@@ -12,9 +12,12 @@ from pydantic import BaseModel
 
 create_id: Callable[[], str] = cuid_wrapper()
 
-DATA_DIR = Path(os.getenv("DATA_DIR")).resolve()
-if not DATA_DIR.exists():
-    DATA_DIR.mkdir()
+if os.getenv("NODE_ENV") == "production":
+    DATA_DIR = Path("/raphgpt-data").resolve()
+else:
+    DATA_DIR = Path(Path.home() / ".local" / "share" / "raphgpt").resolve()
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 

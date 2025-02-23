@@ -11,6 +11,7 @@
   "devDependencies": {
     "@eslint/js": "^9.20.0",
     "@tsconfig/node23": "^23.0.0",
+    "@types/archiver": "^6.0.3",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.13.4",
     "@types/turndown": "^5.0.5",
@@ -41,6 +42,7 @@
     "@solana/web3.js": "^1.98.0",
     "abort-controller": "^3.0.0",
     "ai": "^4.1.45",
+    "anki-apkg-builder": "^2.0.0",
     "chromadb": "^1.10.4",
     "chromadb-default-embed": "^2.13.2",
     "date-fns": "^4.1.0",
@@ -70,12 +72,14 @@
   "type": "module",
   "pnpm": {
     "onlyBuiltDependencies": [
+      "better-sqlite3",
       "bigint-buffer",
       "bufferutil",
       "esbuild",
       "protobufjs",
       "puppeteer",
       "sharp",
+      "sqlite3",
       "utf-8-validate"
     ]
   }
