@@ -3,7 +3,7 @@ services:
     image: ghcr.io/raphtlw/raphgpt:latest
     restart: always
     volumes:
-      - appdata:${DATA_DIR}
+      - appdata:/raphgpt-data
     env_file:
       - path: stack.env
         required: false

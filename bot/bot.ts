@@ -77,13 +77,18 @@ bot.use(async (ctx, next) => {
     async enable(enabled) {
       if (enabled) {
         ctx.typingIndicator.interval = setInterval(async () => {
-          await ctx.replyWithChatAction(
-            "typing",
-            {
-              message_thread_id: ctx.msg?.message_thread_id,
-            },
-            ctx.typingIndicator.controller.signal,
-          );
+          try {
+            await ctx.replyWithChatAction(
+              "typing",
+              {
+                message_thread_id: ctx.msg?.message_thread_id,
+              },
+              ctx.typingIndicator.controller.signal,
+            );
+          } catch {
+            logger.error("replyWithChatAction failed but it doesn't matter");
+            await this.enable(false);
+          }
         }, TYPING_INDICATOR_DURATION);
         await ctx.replyWithChatAction(
           "typing",

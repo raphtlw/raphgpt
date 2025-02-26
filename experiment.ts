@@ -1,28 +1,64 @@
-import { Raydium } from "@raydium-io/raydium-sdk-v2";
-import { Connection } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 const connection = new Connection(
   "https://mainnet.helius-rpc.com/?api-key=b6881db8-dbbc-406a-a59e-249db9523225",
   "confirmed",
 );
 
-const raydium = await Raydium.load({
-  connection,
+// const raydium = await Raydium.load({
+//   connection,
+// });
+
+// const data = await raydium.api.getTokenInfo([
+//   "So11111111111111111111111111111111111111112",
+// ]);
+
+// console.log(data);
+
+// console.log(
+//   await raydium.api.fetchPoolByMints({
+//     mint1: "So11111111111111111111111111111111111111112",
+//     mint2: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+//   }),
+// );
+
+// connection.onLogs("all", (data) => {
+//   console.log(data);
+// });
+
+const result = await connection.getSignaturesForAddress(
+  new PublicKey("Axt8nTMvRnubkYEmxs4K5SDaCyDkmL3ZDhJmbVfc3uVZ"),
+);
+const tx = await connection.getTransaction(result[0].signature, {
+  maxSupportedTransactionVersion: 0,
 });
 
-const data = await raydium.api.getTokenInfo([
-  "So11111111111111111111111111111111111111112",
-]);
-
-console.log(data);
+console.log(result);
+console.log(tx);
 
 console.log(
-  await raydium.api.fetchPoolByMints({
-    mint1: "So11111111111111111111111111111111111111112",
-    mint2: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-  }),
+  await connection.getAccountInfo(
+    new PublicKey("Axt8nTMvRnubkYEmxs4K5SDaCyDkmL3ZDhJmbVfc3uVZ"),
+  ),
 );
 
-connection.onLogs("all", (data) => {
-  console.log(data);
-});
+console.log(
+  await connection.getAccountInfoAndContext(
+    new PublicKey("Axt8nTMvRnubkYEmxs4K5SDaCyDkmL3ZDhJmbVfc3uVZ"),
+  ),
+);
+console.log(
+  await connection.getBalance(
+    new PublicKey("Axt8nTMvRnubkYEmxs4K5SDaCyDkmL3ZDhJmbVfc3uVZ"),
+  ),
+);
+console.log(
+  await connection.getBalanceAndContext(
+    new PublicKey("Axt8nTMvRnubkYEmxs4K5SDaCyDkmL3ZDhJmbVfc3uVZ"),
+  ),
+);
+console.log(
+  await connection.getParsedTransaction(result[0].signature, {
+    maxSupportedTransactionVersion: 0,
+  }),
+);

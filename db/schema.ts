@@ -42,3 +42,11 @@ export const solanaWalletsRelations = relations(solanaWallets, ({ one }) => ({
     references: [users.solanaWallet],
   }),
 }));
+
+export const trainingMessages = sqliteTable("training_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  turnId: integer("turn_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  negative: integer("negative").notNull(),
+});

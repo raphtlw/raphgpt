@@ -14,7 +14,7 @@ import { mainFunctions } from "@/functions/main.js";
 import { toolbox } from "@/functions/toolbox";
 import { getEnv } from "@/helpers/env.js";
 import { ToolData } from "@/helpers/function";
-import { openrouter } from "@/helpers/openrouter.js";
+import { openrouter } from "@/helpers/openrouter";
 import { buildPrompt } from "@/helpers/prompts.js";
 import { callPython } from "@/helpers/python.js";
 import { runModel } from "@/helpers/replicate.js";
@@ -135,8 +135,10 @@ commands.command("clear", "Clear conversation history", async (ctx) => {
   const count = await kv.lLen(`message_turns:${chatId}`);
 
   await kv.del(`message_turns:${chatId}`);
+  await ctx.reply(`All ${count} messages cleared from short term memory.`);
 
-  await ctx.reply(`All ${count} messages cleared.`);
+  await chroma.deleteCollection({ name: "message_history" }).catch(() => {});
+  await ctx.reply(`All messages cleared from long term memory.`);
 });
 
 commands.command("topup", "Get more tokens", async (ctx) => {
@@ -956,89 +958,95 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       await fs.promises.rm(audioFilePath);
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
-    }
+    } else {
+      logger.debug(`Final response: ${finalResponse}`);
 
-    logger.debug(`Final response: ${finalResponse}`);
-
-    // Convert message to MarkdownV2
-    const mdv2 = telegramifyMarkdown(finalResponse, "escape");
-
-    try {
-      logger.debug({ finalResponse, mdv2 }, "Telegramify Markdown");
-      await telegram.sendMessage(ctx.chatId, mdv2, {
-        parse_mode: "MarkdownV2",
-      });
-    } catch (e) {
-      logger.error(e, "Unable to send MarkdownV2 message");
-      logger.info("Uploading message to web");
-
-      let pageTitle: string | null = null;
+      const messagesToSend = finalResponse
+        .split("<|message|>")
+        .filter((text) => text.length > 0);
 
       try {
-        // limit content length to fit context size for model
-        const enc = encoding_for_model(ctx.model.modelId as TiktokenModel);
-        const tok = enc.encode(finalResponse);
-        const lim = tok.slice(0, 1024);
-        const txt = new TextDecoder().decode(enc.decode(lim));
-        enc.free();
-
-        const { text: title } = await generateText({
-          model: openrouter(OPENROUTER_FREE),
-          prompt: [
-            "Generate a suitable title for the following article:",
-            txt,
-            "Reply only with the title and nothing else.",
-            "Do not use any quotes to wrap the title.",
-          ].join("\n"),
-        });
-        pageTitle = title;
+        for (const msgText of messagesToSend) {
+          // Convert message to MarkdownV2
+          const mdv2 = telegramifyMarkdown(msgText, "escape");
+          await telegram.sendMessage(ctx.chatId, mdv2, {
+            parse_mode: "MarkdownV2",
+          });
+        }
       } catch (e) {
-        logger.error(e, "Error occurred while generating title");
-        pageTitle = "Bot Response";
+        logger.error(e, "Unable to send MarkdownV2 message");
+        logger.info("Uploading message to web");
+
+        const messagesCombined = messagesToSend.join("\n");
+
+        let pageTitle: string | null = null;
+
+        try {
+          // limit content length to fit context size for model
+          const enc = encoding_for_model(ctx.model.modelId as TiktokenModel);
+          const tok = enc.encode(messagesCombined);
+          const lim = tok.slice(0, 1024);
+          const txt = new TextDecoder().decode(enc.decode(lim));
+          enc.free();
+
+          const { text: title } = await generateText({
+            model: openrouter(OPENROUTER_FREE),
+            prompt: [
+              "Generate a suitable title for the following article:",
+              txt,
+              "Reply only with the title and nothing else.",
+              "Do not use any quotes to wrap the title.",
+            ].join("\n"),
+          });
+          pageTitle = title;
+        } catch (e) {
+          logger.error(e, "Error occurred while generating title");
+          pageTitle = "Bot Response";
+        }
+
+        const result = await axios({
+          method: "post",
+          url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
+          headers: {
+            Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          data: {
+            title: pageTitle,
+            content: messagesCombined,
+          },
+        }).then((response) =>
+          z
+            .object({
+              doc: z.object({
+                _createdAt: z.string().datetime(),
+                _id: z.string(),
+                _rev: z.string(),
+                _type: z.literal("raphgptPage"),
+                _updatedAt: z.string().datetime(),
+                content: z.string(),
+                publishedAt: z.string().datetime(),
+                title: z.string(),
+              }),
+            })
+            .parse(response.data),
+        );
+
+        const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
+        const publishNotification = fmt([
+          "Telegram limits message sizes, so I've published the message online.",
+          "\n",
+          "You can view the message at this URL: ",
+          url,
+        ]);
+        await telegram.sendMessage(ctx.chatId, publishNotification.text, {
+          entities: publishNotification.entities,
+          reply_parameters: {
+            message_id: ctx.msgId,
+            allow_sending_without_reply: true,
+          },
+        });
       }
-
-      const result = await axios({
-        method: "post",
-        url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
-        headers: {
-          Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
-          "Content-Type": "application/json",
-        },
-        data: {
-          title: pageTitle,
-          content: finalResponse,
-        },
-      }).then((response) =>
-        z
-          .object({
-            doc: z.object({
-              _createdAt: z.string().datetime(),
-              _id: z.string(),
-              _rev: z.string(),
-              _type: z.literal("raphgptPage"),
-              _updatedAt: z.string().datetime(),
-              content: z.string(),
-              publishedAt: z.string().datetime(),
-              title: z.string(),
-            }),
-          })
-          .parse(response.data),
-      );
-
-      const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
-      const publishNotification = fmt([
-        "Telegram limits message sizes, so I've published the message online.",
-        "\n",
-        "You can view the message at this URL: ",
-        url,
-      ]);
-      await telegram.sendMessage(ctx.chatId, publishNotification.text, {
-        entities: publishNotification.entities,
-        reply_parameters: {
-          message_id: ctx.msgId,
-          allow_sending_without_reply: true,
-        },
-      });
     }
 
     let cost = 0;
