@@ -5,10 +5,19 @@ import { chroma } from "@/db/chroma";
 import { getEnv } from "@/helpers/env";
 import { ToolData } from "@/helpers/function";
 import { openai } from "@ai-sdk/openai";
+import { resolve } from "@bonfida/spl-name-service";
 import { createId } from "@paralleldrive/cuid2";
+import {
+  clusterApiUrl,
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+} from "@solana/web3.js";
 import { generateObject, generateText, ImagePart, Tool, tool } from "ai";
 import { AnkiApkgBuilderFactory } from "anki-apkg-builder";
+import assert from "assert";
 import { Collection, DefaultEmbeddingFunction } from "chromadb";
+import { format } from "date-fns";
 import fs from "fs";
 import got from "got";
 import { InputFile } from "grammy";
@@ -16,20 +25,144 @@ import path from "path";
 import pdf2pic from "pdf2pic";
 import { BufferResponse } from "pdf2pic/dist/types/convertResponse";
 import { pipeline as streamPipeline } from "stream/promises";
+import { inspect } from "util";
 import { z } from "zod";
 
 export const toolbox = async (data: ToolData, query: string | string[]) => {
   const embeddingFunction = new DefaultEmbeddingFunction();
 
   const tools = {
-    blockchain_data: tool({
-      description: "Analyze the solana blockchain",
-      parameters: z.object({}),
-      async execute() {
-        logger.debug("tool triggered");
-        await telegram.sendMessage(data.chatId, "boom");
+    wallet_explorer: tool({
+      description:
+        "Explore the Solana blockchain, using wallet addresses or transaction signatures",
+      parameters: z.object({
+        walletAddressOrSignature: z.string(),
+        instruction: z
+          .string()
+          .describe(
+            "Natural language instruction describing what you want from the address or signature",
+          ),
+      }),
+      async execute({ walletAddressOrSignature, instruction }) {
+        const connection = new Connection(clusterApiUrl("mainnet-beta"));
 
-        return "ack";
+        const { text: result, steps } = await generateText({
+          model: openai("o3-mini", {
+            structuredOutputs: false,
+            reasoningEffort: "medium",
+          }),
+          system: `You are a Solana blockchain investigator. Current time in UTC: ${format(new Date(), "EEEE, yyyy-MM-dd 'at' HH:mm:ss zzz (XXX)")}. Always use get_sol_signatures before assuming there are no transactions associated with a specific wallet.`,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: instruction,
+                },
+                {
+                  type: "text",
+                  text: `Use the following parameter: ${walletAddressOrSignature}`,
+                },
+              ],
+            },
+          ],
+          tools: {
+            resolve_sol_domain: tool({
+              parameters: z.object({
+                domain: z.string().describe("Bonfida domain ending in .sol"),
+              }),
+              async execute({ domain }) {
+                const owner = await resolve(connection, domain);
+                return owner.toBase58();
+              },
+            }),
+
+            get_account_info: tool({
+              parameters: z.object({
+                walletAddress: z.string(),
+              }),
+              async execute({ walletAddress }) {
+                return await connection.getAccountInfoAndContext(
+                  new PublicKey(walletAddress),
+                );
+              },
+            }),
+
+            get_sol_signatures: tool({
+              description: "Get all signatures for wallet address",
+              parameters: z.object({
+                walletAddress: z.string(),
+              }),
+              async execute({ walletAddress }) {
+                const signatures = await connection.getSignaturesForAddress(
+                  new PublicKey(walletAddress),
+                );
+
+                logger.debug(signatures, "Confirmed signatures");
+
+                const formatted: string[] = [];
+
+                for (const sig of signatures) {
+                  const txDetails: string[] = [];
+
+                  txDetails.push(
+                    `timestamp: ${format(new Date(), "EEEE, yyyy-MM-dd 'at' HH:mm:ss zzz (XXX)")}`,
+                  );
+                  txDetails.push(`sig: ${sig.signature}`);
+                  txDetails.push(`memo: ${sig.memo}`);
+                  txDetails.push(`error: ${inspect(sig.err)}`);
+
+                  formatted.push(txDetails.join(","));
+                }
+
+                return formatted.join("\n");
+              },
+            }),
+
+            get_sol_tx: tool({
+              description: "Get transaction by signature",
+              parameters: z.object({
+                sig: z.string(),
+              }),
+              async execute({ sig }) {
+                const transaction = await connection.getParsedTransaction(sig, {
+                  commitment: "confirmed",
+                  maxSupportedTransactionVersion: 0,
+                });
+                assert(transaction, "Transaction not found");
+
+                const formatted: string[] = [];
+                const txDetails: string[] = [];
+
+                txDetails.push(
+                  `timestamp: ${format(new Date(), "EEEE, yyyy-MM-dd 'at' HH:mm:ss zzz (XXX)")}`,
+                );
+                txDetails.push(`data: ${inspect(transaction.meta)}`);
+
+                formatted.push(txDetails.join(","));
+
+                return formatted.join("\n");
+              },
+            }),
+
+            lamports_to_sol: tool({
+              description: "Calculate lamports to sol",
+              parameters: z.object({
+                lamports: z.number(),
+              }),
+              async execute({ lamports }) {
+                return lamports / LAMPORTS_PER_SOL;
+              },
+            }),
+          },
+          maxSteps: 5,
+        });
+
+        logger.debug(steps, "Wallet explorer resulting steps");
+        logger.debug(result);
+
+        return `${result} do not leave out any information when showing this data to the user.`;
       },
     }),
 
@@ -230,8 +363,9 @@ export const toolbox = async (data: ToolData, query: string | string[]) => {
         name,
         description: tool.description!,
       })),
-      documents: Object.values(tools).map((tool) => {
+      documents: Object.entries(tools).map(([name, tool]) => {
         const fullText = [];
+        fullText.push(name);
         fullText.push(tool.description);
         fullText.push(JSON.stringify(tool.parameters));
         return fullText.join(" ");
@@ -243,6 +377,8 @@ export const toolbox = async (data: ToolData, query: string | string[]) => {
     queryTexts: Array.isArray(query) ? query : [query],
     include: ["metadatas"] as any,
   });
+
+  logger.debug(toUse, "Matching tools");
 
   // Ensure metadata exists and is structured properly
   if (!toUse.metadatas || !toUse.metadatas[0]) {

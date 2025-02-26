@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.1.13",
+    "@bonfida/spl-name-service": "^3.0.9",
     "@grammyjs/commands": "^1.0.5",
     "@grammyjs/parse-mode": "^1.11.1",
     "@grammyjs/runner": "^2.0.3",
@@ -47,6 +48,7 @@
     "chromadb": "^1.10.4",
     "chromadb-default-embed": "^2.13.2",
     "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "drizzle-orm": "^0.39.3",
     "file-type": "^20.1.0",
     "form-data": "^4.0.2",

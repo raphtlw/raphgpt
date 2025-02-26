@@ -51,7 +51,6 @@ import OpenAI from "openai";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
-import telegramifyMarkdown from "telegramify-markdown";
 import { encoding_for_model, TiktokenModel } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
@@ -963,15 +962,18 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
       const messagesToSend = finalResponse
         .split("<|message|>")
+        .map((text) => text.trim())
         .filter((text) => text.length > 0);
 
       try {
         for (const msgText of messagesToSend) {
           // Convert message to MarkdownV2
-          const mdv2 = telegramifyMarkdown(msgText, "escape");
-          await telegram.sendMessage(ctx.chatId, mdv2, {
-            parse_mode: "MarkdownV2",
-          });
+          // const mdv2 = telegramifyMarkdown(msgText, "escape");
+          // await telegram.sendMessage(ctx.chatId, mdv2, {
+          //   parse_mode: "MarkdownV2",
+          // });
+
+          await telegram.sendMessage(ctx.chatId, msgText);
         }
       } catch (e) {
         logger.error(e, "Unable to send MarkdownV2 message");
