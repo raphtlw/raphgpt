@@ -760,7 +760,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
     }
 
-    logger.debug(inspect({ toSend, remindingSystemPrompt }));
+    logger.debug(
+      `User message content: ${inspect({ toSend, remindingSystemPrompt }, true, 10, true)}`,
+    );
 
     // Get previous messages
     const collection = await chroma.getOrCreateCollection({
@@ -776,7 +778,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       nResults: 4,
     });
 
-    logger.debug(`Relevant info: ${inspect(relevantDocuments)}`);
+    logger.debug(`Relevant messages: ${inspect(relevantDocuments)}`);
 
     // For each document, get the original message turn
     const messages: CoreMessage[] = [];
