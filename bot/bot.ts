@@ -5,7 +5,6 @@ import { getEnv } from "@/helpers/env.js";
 import { handleUserWalletBalanceChange } from "@/helpers/solana.js";
 import { openai } from "@ai-sdk/openai";
 import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
-import { sequentialize } from "@grammyjs/runner";
 import AbortController from "abort-controller";
 import { LanguageModel } from "ai";
 import assert from "assert";
@@ -28,14 +27,6 @@ const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
 });
 
 bot.use(hydrateReply);
-bot.use(
-  sequentialize((ctx) => {
-    if (!ctx.chat || !ctx.from) return;
-    const chat = ctx.chat.id.toString();
-    const user = ctx.from.id.toString();
-    return [chat, user];
-  }),
-);
 bot.use(async (ctx, next) => {
   logger.debug({ update: ctx.update }, "Update Received");
   await next();
@@ -81,7 +72,7 @@ bot.use(async (ctx, next) => {
         ctx.chatAction.interval = setInterval(async () => {
           try {
             await ctx.replyWithChatAction(
-              "typing",
+              this.kind,
               {
                 message_thread_id: ctx.msg?.message_thread_id,
               },
@@ -93,7 +84,7 @@ bot.use(async (ctx, next) => {
           }
         }, TYPING_INDICATOR_DURATION);
         await ctx.replyWithChatAction(
-          "typing",
+          this.kind,
           {
             message_thread_id: ctx.msg?.message_thread_id,
           },

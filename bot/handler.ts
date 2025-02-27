@@ -3,7 +3,6 @@ import { configSchema, getConfigValue } from "@/bot/config.js";
 import {
   DATA_DIR,
   LOCAL_FILES_DIR,
-  OPENROUTER_FREE,
   WHISPER_LANGUAGES,
 } from "@/bot/constants.js";
 import logger from "@/bot/logger.js";
@@ -15,7 +14,6 @@ import { toolbox } from "@/functions/toolbox";
 import { getEnv } from "@/helpers/env.js";
 import { ToolData } from "@/helpers/function";
 import { generateAudio, GenerateTextParams } from "@/helpers/openai";
-import { openrouter } from "@/helpers/openrouter";
 import { buildPrompt } from "@/helpers/prompts.js";
 import { callPython } from "@/helpers/python.js";
 import { runModel } from "@/helpers/replicate.js";
@@ -38,9 +36,8 @@ import {
 } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { CoreMessage, generateText, GenerateTextResult, UserContent } from "ai";
+import { CoreMessage, LanguageModelUsage, streamText, UserContent } from "ai";
 import assert from "assert";
-import axios from "axios";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { fileTypeFromBuffer } from "file-type";
 import FormData from "form-data";
@@ -51,7 +48,6 @@ import { Context, InlineKeyboard, InputFile } from "grammy";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
-import { encoding_for_model, TiktokenModel } from "tiktoken";
 import { inspect } from "util";
 import { z } from "zod";
 
@@ -393,6 +389,8 @@ commands.command("config", "Get basic settings", async (ctx) => {
 
 bot.use(commands);
 
+const activeRequests = new Map<number, AbortController>();
+
 bot.on("message").filter(
   async (ctx) => {
     if (ctx.hasChatType("private")) {
@@ -407,6 +405,20 @@ bot.on("message").filter(
     return false;
   },
   async (ctx) => {
+    const userId = ctx.from.id;
+
+    // Cancel the previous request if it exists
+    if (activeRequests.has(userId)) {
+      activeRequests.get(userId)?.abort();
+      activeRequests.delete(userId);
+      await ctx.reply(
+        "⏹️ Previous response interrupted. Processing new request...",
+      );
+    }
+
+    const controller = new AbortController();
+    activeRequests.set(userId, controller);
+
     await ctx.chatAction.enable(true);
 
     let user = await db.query.users.findFirst({
@@ -881,15 +893,11 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       messages,
       maxSteps: 5,
     };
-    let generateTextResult: GenerateTextResult<
-      (typeof generateTextParams)["tools"],
-      never
-    >;
-    let finalResponse: string;
+    let modelUsage: LanguageModelUsage | undefined;
 
     if (ctx.msg.voice || ctx.msg.audio) {
       const { audio, ...result } = await generateAudio(generateTextParams);
-      generateTextResult = result;
+      modelUsage = result.usage;
 
       assert(audio);
 
@@ -917,150 +925,91 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
-
-      finalResponse = audio.transcript;
     } else {
-      generateTextResult = await generateText({
+      const { textStream, usage } = streamText({
         model: ctx.model,
         ...generateTextParams,
+        async onFinish(result) {
+          activeRequests.delete(userId);
+          modelUsage = await usage;
+
+          // Save to redis
+          const turn = [
+            { role: "user", content: toSend },
+            ...result.response.messages,
+          ];
+          const turnIdx =
+            (await kv.RPUSH(
+              `message_turns:${ctx.chatId}`,
+              superjson.stringify(turn),
+            )) - 1;
+
+          // Save to chromadb
+          // queryDocument is what will be used to match the user's query
+          // based on the input message
+          const queryDocument: string[] = [];
+
+          for (const chunk of turn) {
+            for (const part of chunk.content) {
+              if (typeof part === "string") {
+                queryDocument.push(part);
+              } else if (part.type === "text") {
+                queryDocument.push(part.text);
+              } else if (part.type === "file") {
+                queryDocument.push(part.mimeType);
+              }
+            }
+          }
+
+          logger.debug(`Saving to chromadb: ${queryDocument}`);
+
+          await collection.add({
+            documents: [queryDocument.join(" ")],
+            ids: [createId()],
+            metadatas: [{ chatId: ctx.chatId, messageId: ctx.msgId, turnIdx }],
+          });
+        },
+        async onError({ error }) {
+          logger.error(error, "Encountered error during AI streaming");
+          modelUsage = await usage;
+        },
+        abortSignal: controller.signal,
       });
 
-      finalResponse = generateTextResult.text;
-    }
+      let textBuffer = "";
 
-    const { response, usage } = generateTextResult;
+      for await (const textPart of textStream) {
+        textBuffer += textPart;
+        logger.debug(textBuffer);
 
-    if (!(ctx.msg.voice || ctx.msg.audio)) {
-      // Save to redis
-      const turn = [{ role: "user", content: toSend }, ...response.messages];
-      const turnIdx =
-        (await kv.RPUSH(
-          `message_turns:${ctx.chatId}`,
-          superjson.stringify(turn),
-        )) - 1;
+        if (
+          textBuffer.trim().endsWith("<|message|>") ||
+          textBuffer.trim().endsWith("</|message|>")
+        ) {
+          textBuffer = textBuffer.replaceAll("<|message|>", "");
+          textBuffer = textBuffer.replaceAll("</|message|>", "");
 
-      // Save to chromadb
-      // queryDocument is what will be used to match the user's query
-      // based on the input message
-      const queryDocument: string[] = [];
-
-      for (const chunk of turn) {
-        for (const part of chunk.content) {
-          if (typeof part === "string") {
-            queryDocument.push(part);
-          } else if (part.type === "text") {
-            queryDocument.push(part.text);
-          } else if (part.type === "file") {
-            queryDocument.push(part.mimeType);
+          // flush the buffer
+          if (textBuffer.trim().length > 0) {
+            await telegram.sendMessage(ctx.chatId, textBuffer);
+            textBuffer = "";
           }
         }
       }
 
-      logger.debug(`Saving to chromadb: ${queryDocument}`);
-
-      await collection.add({
-        documents: [queryDocument.join(" ")],
-        ids: [createId()],
-        metadatas: [{ chatId: ctx.chatId, messageId: ctx.msgId, turnIdx }],
-      });
+      // flush the buffer
+      if (textBuffer.trim().length > 0) {
+        await telegram.sendMessage(ctx.chatId, textBuffer);
+        textBuffer = "";
+      }
     }
 
-    logger.debug(`Final response: ${finalResponse}`);
-
-    const messagesToSend = finalResponse
-      .split("<|message|>")
-      .map((text) => text.trim())
-      .filter((text) => text.length > 0);
-
-    try {
-      for (const msgText of messagesToSend) {
-        // Convert message to MarkdownV2
-        // const mdv2 = telegramifyMarkdown(msgText, "escape");
-        // await telegram.sendMessage(ctx.chatId, mdv2, {
-        //   parse_mode: "MarkdownV2",
-        // });
-
-        await telegram.sendMessage(ctx.chatId, msgText);
-      }
-    } catch (e) {
-      logger.error(e, "Unable to send MarkdownV2 message");
-      logger.info("Uploading message to web");
-
-      const messagesCombined = messagesToSend.join("\n");
-
-      let pageTitle: string | null = null;
-
-      try {
-        // limit content length to fit context size for model
-        const enc = encoding_for_model(ctx.model.modelId as TiktokenModel);
-        const tok = enc.encode(messagesCombined);
-        const lim = tok.slice(0, 1024);
-        const txt = new TextDecoder().decode(enc.decode(lim));
-        enc.free();
-
-        const { text: title } = await generateText({
-          model: openrouter(OPENROUTER_FREE),
-          prompt: [
-            "Generate a suitable title for the following article:",
-            txt,
-            "Reply only with the title and nothing else.",
-            "Do not use any quotes to wrap the title.",
-          ].join("\n"),
-        });
-        pageTitle = title;
-      } catch (e) {
-        logger.error(e, "Error occurred while generating title");
-        pageTitle = "Bot Response";
-      }
-
-      const result = await axios({
-        method: "post",
-        url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
-        headers: {
-          Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
-          "Content-Type": "application/json",
-        },
-        data: {
-          title: pageTitle,
-          content: messagesCombined,
-        },
-      }).then((response) =>
-        z
-          .object({
-            doc: z.object({
-              _createdAt: z.string().datetime(),
-              _id: z.string(),
-              _rev: z.string(),
-              _type: z.literal("raphgptPage"),
-              _updatedAt: z.string().datetime(),
-              content: z.string(),
-              publishedAt: z.string().datetime(),
-              title: z.string(),
-            }),
-          })
-          .parse(response.data),
-      );
-
-      const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
-      const publishNotification = fmt([
-        "Telegram limits message sizes, so I've published the message online.",
-        "\n",
-        "You can view the message at this URL: ",
-        url,
-      ]);
-      await telegram.sendMessage(ctx.chatId, publishNotification.text, {
-        entities: publishNotification.entities,
-        reply_parameters: {
-          message_id: ctx.msgId,
-          allow_sending_without_reply: true,
-        },
-      });
-    }
+    assert(modelUsage, "Model usage not found!");
 
     let cost = 0;
 
-    cost += usage.promptTokens * (2.5 / 1_000_000);
-    cost += usage.completionTokens * (10 / 1_000_000);
+    cost += modelUsage.promptTokens * (2.5 / 1_000_000);
+    cost += modelUsage.completionTokens * (10 / 1_000_000);
 
     // 50% will be taken as fees
     cost += (cost / 100) * 50;
