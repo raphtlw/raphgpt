@@ -14,6 +14,7 @@ import { mainFunctions } from "@/functions/main.js";
 import { toolbox } from "@/functions/toolbox";
 import { getEnv } from "@/helpers/env.js";
 import { ToolData } from "@/helpers/function";
+import { generateAudio, GenerateTextParams } from "@/helpers/openai";
 import { openrouter } from "@/helpers/openrouter";
 import { buildPrompt } from "@/helpers/prompts.js";
 import { callPython } from "@/helpers/python.js";
@@ -37,7 +38,7 @@ import {
 } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { CoreMessage, generateText, UserContent } from "ai";
+import { CoreMessage, generateText, GenerateTextResult, UserContent } from "ai";
 import assert from "assert";
 import axios from "axios";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
@@ -47,7 +48,6 @@ import fs from "fs";
 import { globby } from "globby";
 import got from "got";
 import { Context, InlineKeyboard, InputFile } from "grammy";
-import OpenAI from "openai";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
@@ -407,7 +407,7 @@ bot.on("message").filter(
     return false;
   },
   async (ctx) => {
-    await ctx.typingIndicator.enable(true);
+    await ctx.chatAction.enable(true);
 
     let user = await db.query.users.findFirst({
       where: eq(tables.users.userId, ctx.from.id),
@@ -461,13 +461,11 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const toSend: UserContent = [];
     const remindingSystemPrompt: string[] = [];
 
-    let audioFilePath: string | undefined;
-
     const transcribeAudio = async () => {
-      if (ctx.msg.voice || ctx.msg.video_note || ctx.msg.video) {
+      if (ctx.msg.video_note || ctx.msg.video) {
         const file = await downloadFile(ctx);
         const inputFileId = createId();
-        audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+        const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
         await runCommand(`ffmpeg -i ${file.localPath} ${audioFilePath}`);
 
         logger.debug(`ffmpeg generated audio file: ${audioFilePath}`);
@@ -545,10 +543,18 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       toSend.push({ type: "text", text: ctx.msg.text });
     }
     if (ctx.msg.voice) {
-      const result = await transcribeAudio();
-      assert(result, "No transcript found");
+      ctx.chatAction.kind = "record_voice";
 
-      toSend.push({ type: "text", text: result.text });
+      const file = await downloadFile(ctx);
+      const inputFileId = createId();
+      const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+      await runCommand(`ffmpeg -i ${file.localPath} ${audioFilePath}`);
+
+      toSend.push({
+        type: "file",
+        mimeType: "audio/mpeg",
+        data: await fs.promises.readFile(audioFilePath),
+      });
     }
     if (ctx.msg.video_note || ctx.msg.video) {
       const file = await downloadFile(ctx);
@@ -559,20 +565,23 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         lang: "en",
       });
 
-      const results = await Promise.all([transcribe, selectFrames]);
+      const [transcription, frames] = await Promise.all([
+        transcribe,
+        selectFrames,
+      ]);
 
       remindingSystemPrompt.push(
         "You have been given periodic frames from a video. Frames with the least amount of blur were extracted.",
         "When responding, pretend you have watched a video.",
         "To avoid confusing the user, do not say they are images.",
       );
-      for (const result of results[1]) {
+      for (const result of frames) {
         toSend.push({
           type: "image",
           image: await fs.promises.readFile(result.frame.path),
         });
       }
-      toSend.push({ type: "text", text: results[0].text });
+      toSend.push({ type: "text", text: transcription.text });
     }
     if (ctx.msg.photo) {
       const file = await downloadFile(ctx);
@@ -847,12 +856,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       }
     }
 
-    const {
-      text: finalResponse,
-      response,
-      usage,
-    } = await generateText({
-      model: ctx.model,
+    const generateTextParams: Omit<GenerateTextParams<any>, "model"> = {
       tools: {
         ...mainFunctions(toolData),
         ...(await toolbox(toolData, toolQuery.join(" "))),
@@ -874,69 +878,24 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       }),
       messages,
       maxSteps: 5,
-    });
-    const turn = [{ role: "user", content: toSend }, ...response.messages];
-    const turnIdx =
-      (await kv.RPUSH(
-        `message_turns:${ctx.chatId}`,
-        superjson.stringify(turn),
-      )) - 1;
+    };
+    let generateTextResult: GenerateTextResult<
+      (typeof generateTextParams)["tools"],
+      never
+    >;
+    let finalResponse: string;
 
-    // Send final response to user
-    if (ctx.msg.voice || ctx.msg.video_note) {
-      assert(audioFilePath, "Audio file not generated!");
-      const openai = new OpenAI();
-      const fakeToolCallId = createId();
-      const audioCompletion = await openai.chat.completions.create({
-        model: "gpt-4o-audio-preview",
-        modalities: ["text", "audio"],
-        audio: { voice: "alloy", format: "mp3" },
-        messages: [
-          {
-            role: "developer",
-            content:
-              "Be as helpful as possible, and pleasant to listen to. You will not be interrupted. DO NOT HALUCINATE",
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_audio",
-                input_audio: {
-                  data: await fs.promises.readFile(audioFilePath, {
-                    encoding: "base64",
-                  }),
-                  format: "mp3",
-                },
-              },
-            ],
-          },
-          {
-            role: "assistant",
-            tool_calls: [
-              {
-                id: fakeToolCallId,
-                type: "function",
-                function: {
-                  name: "get_llm_response",
-                  arguments: "",
-                },
-              },
-            ],
-          },
-          {
-            role: "tool",
-            tool_call_id: fakeToolCallId,
-            content: finalResponse,
-          },
-        ],
-        store: true,
-      });
+    if (ctx.msg.voice || ctx.msg.audio) {
+      const { audio, ...result } = await generateAudio(generateTextParams);
+      generateTextResult = result;
+
+      assert(audio);
+
       const fileId = createId();
       const spokenPath = path.join(DATA_DIR, `voice-${fileId}.mp3`);
       await fs.promises.writeFile(
         spokenPath,
-        Buffer.from(audioCompletion.choices[0].message.audio!.data, "base64"),
+        Buffer.from(audio.data, "base64"),
         { encoding: "utf-8" },
       );
       const outputPath = path.join(DATA_DIR, `voice-${fileId}.ogg`);
@@ -954,101 +913,118 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         },
       );
 
-      await fs.promises.rm(audioFilePath);
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
-    } else {
-      logger.debug(`Final response: ${finalResponse}`);
 
-      const messagesToSend = finalResponse
-        .split("<|message|>")
-        .map((text) => text.trim())
-        .filter((text) => text.length > 0);
+      finalResponse = audio.transcript;
+    } else {
+      generateTextResult = await generateText({
+        model: ctx.model,
+        ...generateTextParams,
+      });
+
+      finalResponse = generateTextResult.text;
+    }
+
+    const { response, usage } = generateTextResult;
+
+    const turn = [{ role: "user", content: toSend }, ...response.messages];
+    const turnIdx =
+      (await kv.RPUSH(
+        `message_turns:${ctx.chatId}`,
+        superjson.stringify(turn),
+      )) - 1;
+
+    logger.debug(`Final response: ${finalResponse}`);
+
+    const messagesToSend = finalResponse
+      .split("<|message|>")
+      .map((text) => text.trim())
+      .filter((text) => text.length > 0);
+
+    try {
+      for (const msgText of messagesToSend) {
+        // Convert message to MarkdownV2
+        // const mdv2 = telegramifyMarkdown(msgText, "escape");
+        // await telegram.sendMessage(ctx.chatId, mdv2, {
+        //   parse_mode: "MarkdownV2",
+        // });
+
+        await telegram.sendMessage(ctx.chatId, msgText);
+      }
+    } catch (e) {
+      logger.error(e, "Unable to send MarkdownV2 message");
+      logger.info("Uploading message to web");
+
+      const messagesCombined = messagesToSend.join("\n");
+
+      let pageTitle: string | null = null;
 
       try {
-        for (const msgText of messagesToSend) {
-          // Convert message to MarkdownV2
-          // const mdv2 = telegramifyMarkdown(msgText, "escape");
-          // await telegram.sendMessage(ctx.chatId, mdv2, {
-          //   parse_mode: "MarkdownV2",
-          // });
+        // limit content length to fit context size for model
+        const enc = encoding_for_model(ctx.model.modelId as TiktokenModel);
+        const tok = enc.encode(messagesCombined);
+        const lim = tok.slice(0, 1024);
+        const txt = new TextDecoder().decode(enc.decode(lim));
+        enc.free();
 
-          await telegram.sendMessage(ctx.chatId, msgText);
-        }
-      } catch (e) {
-        logger.error(e, "Unable to send MarkdownV2 message");
-        logger.info("Uploading message to web");
-
-        const messagesCombined = messagesToSend.join("\n");
-
-        let pageTitle: string | null = null;
-
-        try {
-          // limit content length to fit context size for model
-          const enc = encoding_for_model(ctx.model.modelId as TiktokenModel);
-          const tok = enc.encode(messagesCombined);
-          const lim = tok.slice(0, 1024);
-          const txt = new TextDecoder().decode(enc.decode(lim));
-          enc.free();
-
-          const { text: title } = await generateText({
-            model: openrouter(OPENROUTER_FREE),
-            prompt: [
-              "Generate a suitable title for the following article:",
-              txt,
-              "Reply only with the title and nothing else.",
-              "Do not use any quotes to wrap the title.",
-            ].join("\n"),
-          });
-          pageTitle = title;
-        } catch (e) {
-          logger.error(e, "Error occurred while generating title");
-          pageTitle = "Bot Response";
-        }
-
-        const result = await axios({
-          method: "post",
-          url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
-          headers: {
-            Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
-            "Content-Type": "application/json",
-          },
-          data: {
-            title: pageTitle,
-            content: messagesCombined,
-          },
-        }).then((response) =>
-          z
-            .object({
-              doc: z.object({
-                _createdAt: z.string().datetime(),
-                _id: z.string(),
-                _rev: z.string(),
-                _type: z.literal("raphgptPage"),
-                _updatedAt: z.string().datetime(),
-                content: z.string(),
-                publishedAt: z.string().datetime(),
-                title: z.string(),
-              }),
-            })
-            .parse(response.data),
-        );
-
-        const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
-        const publishNotification = fmt([
-          "Telegram limits message sizes, so I've published the message online.",
-          "\n",
-          "You can view the message at this URL: ",
-          url,
-        ]);
-        await telegram.sendMessage(ctx.chatId, publishNotification.text, {
-          entities: publishNotification.entities,
-          reply_parameters: {
-            message_id: ctx.msgId,
-            allow_sending_without_reply: true,
-          },
+        const { text: title } = await generateText({
+          model: openrouter(OPENROUTER_FREE),
+          prompt: [
+            "Generate a suitable title for the following article:",
+            txt,
+            "Reply only with the title and nothing else.",
+            "Do not use any quotes to wrap the title.",
+          ].join("\n"),
         });
+        pageTitle = title;
+      } catch (e) {
+        logger.error(e, "Error occurred while generating title");
+        pageTitle = "Bot Response";
       }
+
+      const result = await axios({
+        method: "post",
+        url: `${getEnv("RAPHTLW_URL")}/api/raphgpt/document`,
+        headers: {
+          Authorization: `Bearer ${getEnv("RAPHTLW_API_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        data: {
+          title: pageTitle,
+          content: messagesCombined,
+        },
+      }).then((response) =>
+        z
+          .object({
+            doc: z.object({
+              _createdAt: z.string().datetime(),
+              _id: z.string(),
+              _rev: z.string(),
+              _type: z.literal("raphgptPage"),
+              _updatedAt: z.string().datetime(),
+              content: z.string(),
+              publishedAt: z.string().datetime(),
+              title: z.string(),
+            }),
+          })
+          .parse(response.data),
+      );
+
+      const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
+      const publishNotification = fmt([
+        "Telegram limits message sizes, so I've published the message online.",
+        "\n",
+        "You can view the message at this URL: ",
+        url,
+      ]);
+      await telegram.sendMessage(ctx.chatId, publishNotification.text, {
+        entities: publishNotification.entities,
+        reply_parameters: {
+          message_id: ctx.msgId,
+          allow_sending_without_reply: true,
+        },
+      });
     }
 
     let cost = 0;

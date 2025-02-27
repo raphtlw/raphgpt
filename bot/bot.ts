@@ -15,7 +15,8 @@ import { Bot, Context, GrammyError, HttpError } from "grammy";
 export type BotContext = ParseModeFlavor<Context> & {
   model: LanguageModel;
 
-  typingIndicator: {
+  chatAction: {
+    kind: Parameters<BotContext["replyWithChatAction"]>[0];
     enable: (enabled: boolean) => Promise<void>;
     interval: NodeJS.Timeout | null;
     controller: AbortController;
@@ -71,19 +72,20 @@ checkWallets();
 
 // Typing indicator
 bot.use(async (ctx, next) => {
-  ctx.typingIndicator = {
+  ctx.chatAction = {
+    kind: "typing",
     interval: null,
     controller: new AbortController(),
     async enable(enabled) {
       if (enabled) {
-        ctx.typingIndicator.interval = setInterval(async () => {
+        ctx.chatAction.interval = setInterval(async () => {
           try {
             await ctx.replyWithChatAction(
               "typing",
               {
                 message_thread_id: ctx.msg?.message_thread_id,
               },
-              ctx.typingIndicator.controller.signal,
+              ctx.chatAction.controller.signal,
             );
           } catch {
             logger.error("replyWithChatAction failed but it doesn't matter");
@@ -95,12 +97,12 @@ bot.use(async (ctx, next) => {
           {
             message_thread_id: ctx.msg?.message_thread_id,
           },
-          ctx.typingIndicator.controller.signal,
+          ctx.chatAction.controller.signal,
         );
       } else {
-        if (ctx.typingIndicator.interval) {
-          ctx.typingIndicator.controller.abort();
-          clearInterval(ctx.typingIndicator.interval);
+        if (ctx.chatAction.interval) {
+          ctx.chatAction.controller.abort();
+          clearInterval(ctx.chatAction.interval);
         }
       }
     },
@@ -113,7 +115,7 @@ bot.use(async (ctx, next) => {
   const before = Date.now();
   await next();
   const after = Date.now();
-  await ctx.typingIndicator.enable(false);
+  await ctx.chatAction.enable(false);
 
   logger.debug(
     { before, after, duration: after - before },
@@ -122,9 +124,9 @@ bot.use(async (ctx, next) => {
 });
 
 bot.catch(async ({ error, ctx, message }) => {
-  if (ctx.typingIndicator.interval) {
-    ctx.typingIndicator.controller.abort();
-    clearInterval(ctx.typingIndicator.interval);
+  if (ctx.chatAction.interval) {
+    ctx.chatAction.controller.abort();
+    clearInterval(ctx.chatAction.interval);
   }
 
   if (walletActivityInterval) {
