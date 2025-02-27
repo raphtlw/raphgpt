@@ -928,12 +928,40 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     const { response, usage } = generateTextResult;
 
-    const turn = [{ role: "user", content: toSend }, ...response.messages];
-    const turnIdx =
-      (await kv.RPUSH(
-        `message_turns:${ctx.chatId}`,
-        superjson.stringify(turn),
-      )) - 1;
+    if (!(ctx.msg.voice || ctx.msg.audio)) {
+      // Save to redis
+      const turn = [{ role: "user", content: toSend }, ...response.messages];
+      const turnIdx =
+        (await kv.RPUSH(
+          `message_turns:${ctx.chatId}`,
+          superjson.stringify(turn),
+        )) - 1;
+
+      // Save to chromadb
+      // queryDocument is what will be used to match the user's query
+      // based on the input message
+      const queryDocument: string[] = [];
+
+      for (const chunk of turn) {
+        for (const part of chunk.content) {
+          if (typeof part === "string") {
+            queryDocument.push(part);
+          } else if (part.type === "text") {
+            queryDocument.push(part.text);
+          } else if (part.type === "file") {
+            queryDocument.push(part.mimeType);
+          }
+        }
+      }
+
+      logger.debug(`Saving to chromadb: ${queryDocument}`);
+
+      await collection.add({
+        documents: [queryDocument.join(" ")],
+        ids: [createId()],
+        metadatas: [{ chatId: ctx.chatId, messageId: ctx.msgId, turnIdx }],
+      });
+    }
 
     logger.debug(`Final response: ${finalResponse}`);
 
@@ -1046,31 +1074,6 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .where(eq(tables.users.userId, ctx.from.id));
 
     logger.debug({ cost }, "Deducted credits");
-
-    // Save to chromadb
-    // queryDocument is what will be used to match the user's query
-    // based on the input message
-    const queryDocument: string[] = [];
-
-    for (const chunk of turn) {
-      for (const part of chunk.content) {
-        if (typeof part === "string") {
-          queryDocument.push(part);
-        } else if (part.type === "text") {
-          queryDocument.push(part.text);
-        } else if (part.type === "file") {
-          queryDocument.push(part.mimeType);
-        }
-      }
-    }
-
-    logger.debug(`Saving to chromadb: ${queryDocument}`);
-
-    await collection.add({
-      documents: [queryDocument.join(" ")],
-      ids: [createId()],
-      metadatas: [{ chatId: ctx.chatId, messageId: ctx.msgId, turnIdx }],
-    });
   },
 );
 
