@@ -38,7 +38,6 @@ import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import {
   CoreMessage,
-  CoreUserMessage,
   FilePart,
   ImagePart,
   LanguageModelUsage,
@@ -846,24 +845,21 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const pendingRequests = await kv
       .LRANGE(`pending_requests:${ctx.chatId}:${userId}`, 0, -1)
       .then((jsons) => jsons.map((j) => superjson.parse<UserContent>(j)));
-    messages.push(
-      ...pendingRequests.map(
-        (content) =>
-          ({
-            role: "user",
-            content,
-          }) as CoreUserMessage,
-      ),
-    );
 
     logger.debug(
       `Pending requests: ${inspect(pendingRequests, true, 10, true)}`,
     );
 
+    const content = [...pendingRequests.flat(1), ...toSend] as UserContent;
+
     messages.push({
       role: "user",
-      content: toSend,
+      content,
     });
+
+    logger.debug(
+      `Sending message to model: ${inspect(content, true, 10, true)}`,
+    );
 
     const toolData: ToolData = {
       userId: user.userId!,

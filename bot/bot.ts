@@ -69,7 +69,7 @@ bot.use(async (ctx, next) => {
     interval: null,
     controller: new AbortController(),
     async enable(enabled) {
-      if (enabled) {
+      if (enabled && !ctx.chatAction.interval) {
         ctx.chatAction.interval = setInterval(async () => {
           try {
             await ctx.replyWithChatAction(
