@@ -130,6 +130,8 @@ Balance: ${bold(`${dollars(user.credits)}`)}`,
 });
 
 commands.command("clear", "Clear conversation history", async (ctx) => {
+  assert(ctx.from, "Could not get message sender");
+  const userId = ctx.from.id;
   let chatId = ctx.chatId;
 
   if (ctx.match) {
@@ -137,12 +139,19 @@ commands.command("clear", "Clear conversation history", async (ctx) => {
     chatId = parseInt(args);
   }
 
-  const count = await kv.lLen(`message_turns:${chatId}`);
+  const count = await kv.lLen(`message_turns:${chatId}:${userId}`);
 
-  await kv.del(`message_turns:${chatId}`);
+  await kv.del(`message_turns:${chatId}:${userId}`);
   await ctx.reply(`All ${count} messages cleared from short term memory.`);
 
-  await chroma.deleteCollection({ name: "message_history" }).catch(() => {});
+  const collection = await chroma.getOrCreateCollection({
+    name: "message_history",
+  });
+  await collection.delete({
+    where: {
+      chatId: ctx.chatId,
+    },
+  });
   await ctx.reply(`All messages cleared from long term memory.`);
 });
 
