@@ -1,4 +1,5 @@
 import { TYPING_INDICATOR_DURATION } from "@/bot/constants";
+import { activeRequests } from "@/bot/handler";
 import logger from "@/bot/logger.js";
 import { db, tables } from "@/db/db.js";
 import { getEnv } from "@/helpers/env.js";
@@ -92,6 +93,7 @@ bot.use(async (ctx, next) => {
         );
       } else {
         if (ctx.chatAction.interval) {
+          logger.debug("Stopping typing indicator");
           ctx.chatAction.controller.abort();
           clearInterval(ctx.chatAction.interval);
         }
@@ -115,13 +117,14 @@ bot.use(async (ctx, next) => {
 });
 
 bot.catch(async ({ error, ctx, message }) => {
-  if (ctx.chatAction.interval) {
-    ctx.chatAction.controller.abort();
-    clearInterval(ctx.chatAction.interval);
-  }
+  await ctx.chatAction.enable(false);
 
   if (walletActivityInterval) {
     clearInterval(walletActivityInterval);
+  }
+
+  if (ctx.from) {
+    activeRequests.delete(ctx.from.id);
   }
 
   logger.error(error, `Error while handling update ${ctx.update.update_id}`);

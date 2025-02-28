@@ -1,4 +1,4 @@
-import { bot } from "@/bot/bot.js";
+import { bot, BotContext } from "@/bot/bot.js";
 import { configSchema, getConfigValue } from "@/bot/config.js";
 import {
   DATA_DIR,
@@ -36,7 +36,18 @@ import {
 } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { CoreMessage, LanguageModelUsage, streamText, UserContent } from "ai";
+import {
+  CoreMessage,
+  CoreUserMessage,
+  FilePart,
+  ImagePart,
+  LanguageModelUsage,
+  streamText,
+  TextPart,
+  ToolCallPart,
+  ToolContent,
+  UserContent,
+} from "ai";
 import assert from "assert";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { fileTypeFromBuffer } from "file-type";
@@ -51,7 +62,7 @@ import sharp from "sharp";
 import { inspect } from "util";
 import { z } from "zod";
 
-const commands = new CommandGroup<ParseModeFlavor<Context>>();
+const commands = new CommandGroup<ParseModeFlavor<BotContext>>();
 
 const dollars = (cents: number) => {
   return cents / Math.pow(10, 2);
@@ -389,7 +400,7 @@ commands.command("config", "Get basic settings", async (ctx) => {
 
 bot.use(commands);
 
-const activeRequests = new Map<number, AbortController>();
+export const activeRequests = new Map<number, AbortController>();
 
 bot.on("message").filter(
   async (ctx) => {
@@ -823,7 +834,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       .map((t) => superjson.parse(t))
       .flat(2) as CoreMessage[];
 
-    logger.debug(`Message History: ${inspect(messageTurns)}`);
+    logger.debug(`Message History: ${inspect(messageTurns, true, 10, true)}`);
 
     messages.push(...messageTurns);
 
@@ -831,6 +842,23 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       role: "system",
       content: remindingSystemPrompt.join("\n"),
     });
+
+    const pendingRequests = await kv
+      .LRANGE(`pending_requests:${ctx.chatId}:${userId}`, 0, -1)
+      .then((jsons) => jsons.map((j) => superjson.parse<UserContent>(j)));
+    messages.push(
+      ...pendingRequests.map(
+        (content) =>
+          ({
+            role: "user",
+            content,
+          }) as CoreUserMessage,
+      ),
+    );
+
+    logger.debug(
+      `Pending requests: ${inspect(pendingRequests, true, 10, true)}`,
+    );
 
     messages.push({
       role: "user",
@@ -870,11 +898,13 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       }
     }
 
-    const generateTextParams: Omit<GenerateTextParams<any>, "model"> = {
-      tools: {
-        ...mainFunctions(toolData),
-        ...(await toolbox(toolData, toolQuery.join(" "))),
-      },
+    const fns = {
+      ...mainFunctions(toolData),
+      ...(await toolbox(toolData, toolQuery.join(" "))),
+    };
+
+    const generateTextParams: Omit<GenerateTextParams<typeof fns>, "model"> = {
+      tools: fns,
       system: await buildPrompt("system", {
         me: JSON.stringify(ctx.me),
         date: new Date().toLocaleString(),
@@ -895,8 +925,33 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     };
     let modelUsage: LanguageModelUsage | undefined;
 
+    await kv.RPUSH(
+      `pending_requests:${ctx.chatId}:${userId}`,
+      superjson.stringify(toSend),
+    );
+
     if (ctx.msg.voice || ctx.msg.audio) {
-      const { audio, ...result } = await generateAudio(generateTextParams);
+      // Remove all image_url inputs for audio model
+      const messagesForAudioModel = messages.map((message) => {
+        let content = message.content;
+
+        if (Array.isArray(message.content)) {
+          content = message.content.filter((part) => part.type !== "image") as
+            | (TextPart | ImagePart | FilePart)[]
+            | (TextPart | ToolCallPart)[]
+            | ToolContent;
+        }
+
+        return {
+          ...message,
+          content,
+        };
+      });
+
+      const { audio, ...result } = await generateAudio({
+        ...generateTextParams,
+        messages: messagesForAudioModel as CoreMessage[],
+      });
       modelUsage = result.usage;
 
       assert(audio);
@@ -925,6 +980,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
       await fs.promises.rm(spokenPath);
       await fs.promises.rm(outputPath);
+
+      // Remove all pending requests
+      await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);
     } else {
       const { textStream, usage } = streamText({
         model: ctx.model,
@@ -933,6 +991,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           activeRequests.delete(userId);
           modelUsage = await usage;
 
+          // Remove all pending requests
+          await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);
+
           // Save to redis
           const turn = [
             { role: "user", content: toSend },
@@ -940,7 +1001,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           ];
           const turnIdx =
             (await kv.RPUSH(
-              `message_turns:${ctx.chatId}`,
+              `message_turns:${ctx.chatId}:${userId}`,
               superjson.stringify(turn),
             )) - 1;
 
@@ -971,6 +1032,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         },
         async onError({ error }) {
           logger.error(error, "Encountered error during AI streaming");
+          activeRequests.delete(userId);
           modelUsage = await usage;
         },
         abortSignal: controller.signal,
