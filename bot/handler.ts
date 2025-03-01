@@ -39,6 +39,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import {
   CoreMessage,
   FilePart,
+  generateText,
   ImagePart,
   LanguageModelUsage,
   streamText,
@@ -58,6 +59,7 @@ import { Context, InlineKeyboard, InputFile } from "grammy";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
+import telegramifyMarkdown from "telegramify-markdown";
 import { inspect } from "util";
 import { z } from "zod";
 
@@ -139,20 +141,21 @@ commands.command("clear", "Clear conversation history", async (ctx) => {
     chatId = parseInt(args);
   }
 
-  const count = await kv.lLen(`message_turns:${chatId}:${userId}`);
+  const scount = await kv.LLEN(`message_turns:${chatId}:${userId}`);
 
   await kv.del(`message_turns:${chatId}:${userId}`);
-  await ctx.reply(`All ${count} messages cleared from short term memory.`);
+  await ctx.reply(`All ${scount} messages cleared from short term memory.`);
 
   const collection = await chroma.getOrCreateCollection({
     name: "message_history",
   });
+  const lcount = await collection.count();
   await collection.delete({
     where: {
       chatId: ctx.chatId,
     },
   });
-  await ctx.reply(`All messages cleared from long term memory.`);
+  await ctx.reply(`All ${lcount} messages cleared from long term memory.`);
 });
 
 commands.command("topup", "Get more tokens", async (ctx) => {
@@ -666,9 +669,31 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
         .toBuffer();
+
+      const { text } = await generateText({
+        model: openai("gpt-4o"),
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: ctx.msg.caption
+                  ? `Describe what's in this photo, most accurately as context for another llm to answer the user's request "${ctx.msg.caption}"`
+                  : `What's in this photo?`,
+              },
+              {
+                type: "image",
+                image: image,
+              },
+            ],
+          },
+        ],
+      });
+
       toSend.push({
-        type: "image",
-        image,
+        type: "text",
+        text: `Image contents: ${text}`,
       });
     }
     if (ctx.msg.document) {
@@ -1104,7 +1129,10 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
           // flush the buffer
           if (textBuffer.trim().length > 0) {
-            await telegram.sendMessage(ctx.chatId, textBuffer);
+            const mdv2 = telegramifyMarkdown(textBuffer, "escape");
+            await telegram.sendMessage(ctx.chatId, mdv2, {
+              parse_mode: "MarkdownV2",
+            });
             textBuffer = "";
           }
         }
@@ -1112,7 +1140,10 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
       // flush the buffer
       if (textBuffer.trim().length > 0) {
-        await telegram.sendMessage(ctx.chatId, textBuffer);
+        const mdv2 = telegramifyMarkdown(textBuffer, "escape");
+        await telegram.sendMessage(ctx.chatId, mdv2, {
+          parse_mode: "MarkdownV2",
+        });
         textBuffer = "";
       }
     }
