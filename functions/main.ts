@@ -376,41 +376,6 @@ export const mainFunctions = (data: ToolData) => {
       },
     }),
 
-    delete_personality: tool({
-      parameters: z.object({
-        id: z.number().describe("ID of personality record to remove"),
-      }),
-      async execute({ id }) {
-        await db
-          .delete(tables.personality)
-          .where(eq(tables.personality.id, id));
-
-        return "Removed memory from database";
-      },
-    }),
-
-    add_personality: tool({
-      parameters: z.object({
-        text: z
-          .string()
-          .describe(
-            "What to remember to alter my behavior when responding to future messages",
-          ),
-      }),
-      async execute({ text }) {
-        await db.insert(tables.personality).values({
-          userId: data.userId,
-          content: text,
-        });
-
-        await telegram.sendMessage(data.chatId, `Updated memory: ${text}`, {
-          disable_notification: true,
-        });
-
-        return "Updated personality, notified user. Continue function calls.";
-      },
-    }),
-
     calculate: tool({
       description: [
         "Evaluate mathematical expressions.",

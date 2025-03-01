@@ -406,6 +406,53 @@ commands.command("config", "Get basic settings", async (ctx) => {
   );
 });
 
+commands.command("personality", "Add personality", async (ctx) => {
+  assert(ctx.from);
+  const line = ctx.msg.text.split(" ").slice(1).join(" ");
+
+  if (!line || line.length === 0) {
+    await telegram.sendMessage(ctx.chatId, "Personality not specified!");
+    return;
+  }
+
+  await db.insert(tables.personality).values({
+    userId: ctx.from.id,
+    content: line,
+  });
+
+  await telegram.sendMessage(ctx.chatId, `Updated personality: ${line}`, {
+    disable_notification: true,
+  });
+});
+
+commands.command("delpersonality", "Delete personality", async (ctx) => {
+  const id = parseInt(ctx.msg.text.split(" ")[1]);
+
+  await db.delete(tables.personality).where(eq(tables.personality.id, id));
+
+  await telegram.sendMessage(ctx.chatId, `Deleted personality`, {
+    disable_notification: true,
+  });
+});
+
+commands.command(
+  "getpersonality",
+  "Get all personality records",
+  async (ctx) => {
+    const personality = await db.query.personality.findMany({
+      columns: {
+        id: true,
+        content: true,
+      },
+    });
+
+    await telegram.sendMessage(
+      ctx.chatId,
+      `Personality:\n${personality.map((line) => `${line.id} - ${line.content}`).join("\n")}`,
+    );
+  },
+);
+
 bot.use(commands);
 
 export const activeRequests = new Map<number, AbortController>();
@@ -917,12 +964,11 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         personality: (
           await db.query.personality.findMany({
             columns: {
-              id: true,
               content: true,
             },
           })
         )
-          .map((r) => `${r.id} - ${r.content}`)
+          .map((r) => r.content)
           .join("\n"),
       }),
       messages,
