@@ -554,6 +554,27 @@ bot.callbackQuery(/personality-remove-(\d+)/, async (ctx) => {
   await ctx.reply(`Deleted ${result.rowsAffected} personality record`);
 });
 
+commands.command(
+  "cancel",
+  "If the previous message was a mistake, you can cancel the request",
+  async (ctx) => {
+    logger.debug("Cancellation requested");
+
+    assert(ctx.from);
+    const userId = ctx.from.id;
+
+    if (activeRequests.has(userId)) {
+      activeRequests.get(userId)?.abort();
+      activeRequests.delete(userId);
+    }
+
+    // Remove all pending requests
+    await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);
+
+    await ctx.replyFmt([bold("Stopped thinking")]);
+  },
+);
+
 bot.use(commands);
 
 export const activeRequests = new Map<number, AbortController>();

@@ -9,6 +9,7 @@ import { ToolData } from "@/helpers/function";
 import { convertHtmlToMarkdown } from "@/helpers/markdown.js";
 import { runModel } from "@/helpers/replicate.js";
 import { runCommand } from "@/helpers/shell.js";
+import { kv } from "@/kv/redis";
 import { bold, fmt, italic } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { tool } from "ai";
@@ -450,6 +451,9 @@ export const mainFunctions = (data: ToolData) => {
           activeRequests.get(data.userId)?.abort();
           activeRequests.delete(data.userId);
         }
+
+        // Remove all pending requests
+        await kv.DEL(`pending_requests:${data.chatId}:${data.userId}`);
 
         return "Stopped generating response.";
       },
