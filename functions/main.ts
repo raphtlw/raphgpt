@@ -1,4 +1,5 @@
 import { DATA_DIR } from "@/bot/constants.js";
+import { activeRequests } from "@/bot/handler";
 import logger from "@/bot/logger.js";
 import { telegram } from "@/bot/telegram.js";
 import { db, tables } from "@/db/db.js";
@@ -438,6 +439,19 @@ export const mainFunctions = (data: ToolData) => {
         });
 
         return url;
+      },
+    }),
+
+    cancel: tool({
+      description: "Interrupt and stop thinking of a response",
+      parameters: z.object({}),
+      async execute() {
+        if (activeRequests.has(data.userId)) {
+          activeRequests.get(data.userId)?.abort();
+          activeRequests.delete(data.userId);
+        }
+
+        return "Stopped generating response.";
       },
     }),
   };
