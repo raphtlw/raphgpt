@@ -223,13 +223,10 @@ bot.callbackQuery("payment-method-solana", async (ctx) => {
         username: ctx.from.username,
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
-        credits: 69,
       })
       .returning()
       .get();
-    await ctx.reply(
-      "Welcome to raphGPT! You have 69 cents in credits to start with",
-    );
+    await ctx.reply("Welcome to raphGPT!");
   }
   assert(user, "Unable to retrieve user");
 
@@ -654,12 +651,11 @@ bot.on(["message", "edit:text"]).filter(
           username: ctx.from.username,
           firstName: ctx.from.first_name,
           lastName: ctx.from.last_name,
-          credits: 69,
         })
         .returning();
       user = inserted[0];
       await ctx.replyFmt(
-        fmt`${bold(`Welcome to raphGPT. You have 69 cents in credits to start with.`)}
+        fmt`${bold(`Welcome to raphGPT.`)}
 ${italic(`You can get more tokens from the store (/topup)`)}`,
       );
     } else {
@@ -676,9 +672,14 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     }
     assert(user, "Unable to retrieve user");
 
+    // Check if user has enough free messages
     // Check if user has enough credits
     // Excluding TELEGRAM_BOT_OWNER
+    const userExceedsFreeMessages =
+      user.freeTierMessageCount >
+      getEnv("FREE_TIER_MESSAGE_DAILY_THRESHOLD", z.coerce.number());
     if (
+      userExceedsFreeMessages &&
       user.credits <= 0 &&
       user.userId !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())
     ) {
@@ -843,7 +844,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           },
         ],
       });
-      await deductCredits(ctx, usage);
+      if (userExceedsFreeMessages) {
+        await deductCredits(ctx, usage);
+      }
 
       toSend.push({
         type: "text",
@@ -1049,7 +1052,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           },
         ],
       });
-      await deductCredits(ctx, usage);
+      if (userExceedsFreeMessages) {
+        await deductCredits(ctx, usage);
+      }
 
       toSend.push({
         type: "text",
@@ -1355,7 +1360,16 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     assert(modelUsage, "Model usage not found!");
 
-    await deductCredits(ctx, modelUsage);
+    if (userExceedsFreeMessages) {
+      await deductCredits(ctx, modelUsage);
+    } else {
+      await db
+        .update(tables.users)
+        .set({
+          freeTierMessageCount: sql`${tables.users.freeTierMessageCount} + 1`,
+        })
+        .where(eq(tables.users.userId, ctx.from.id));
+    }
   },
 );
 

@@ -8,6 +8,7 @@ export const users = sqliteTable("users", {
   username: text("username"),
   firstName: text("first_name"),
   lastName: text("last_name"),
+  freeTierMessageCount: integer("free_tier_message_count").default(0).notNull(),
   credits: integer("credits").default(0).notNull(),
   solanaWallet: integer("solana_wallet_id").unique(),
 });

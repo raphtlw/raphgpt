@@ -13,6 +13,7 @@ import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
 import AbortController from "abort-controller";
 import { LanguageModel } from "ai";
 import assert from "assert";
+import { CronJob } from "cron";
 import { isNotNull } from "drizzle-orm";
 import { Bot, GrammyError, HttpError, type Context } from "grammy";
 
@@ -66,6 +67,15 @@ const checkWallets = async () => {
 };
 const walletActivityInterval = setInterval(checkWallets, 1 * 60 * 1000);
 checkWallets();
+
+// Reset free tier message counts
+const job = new CronJob("0 0 * * *", async () => {
+  const result = await db.update(tables.users).set({
+    freeTierMessageCount: 0,
+  });
+  logger.info(result, "Reset free tier message quota");
+});
+job.start();
 
 // Typing indicator
 bot.use(async (ctx, next) => {
