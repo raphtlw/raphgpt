@@ -5,14 +5,18 @@ import { db, tables } from "@/db/db.js";
 import { getEnv } from "@/helpers/env.js";
 import { handleUserWalletBalanceChange } from "@/helpers/solana.js";
 import { openai } from "@ai-sdk/openai";
+import {
+  conversations,
+  type ConversationFlavor,
+} from "@grammyjs/conversations";
 import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
 import AbortController from "abort-controller";
 import { LanguageModel } from "ai";
 import assert from "assert";
 import { isNotNull } from "drizzle-orm";
-import { Bot, Context, GrammyError, HttpError } from "grammy";
+import { Bot, GrammyError, HttpError, type Context } from "grammy";
 
-export type BotContext = ParseModeFlavor<Context> & {
+export type BotContext = ParseModeFlavor<ConversationFlavor<Context>> & {
   model: LanguageModel;
 
   chatAction: {
@@ -28,6 +32,7 @@ const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
 });
 
 bot.use(hydrateReply);
+bot.use(conversations());
 bot.use(async (ctx, next) => {
   logger.debug({ update: ctx.update }, "Update Received");
   await next();

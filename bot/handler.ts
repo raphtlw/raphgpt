@@ -26,6 +26,7 @@ import { superjson } from "@/helpers/superjson.js";
 import { kv } from "@/kv/redis.js";
 import { openai } from "@ai-sdk/openai";
 import { CommandGroup } from "@grammyjs/commands";
+import { createConversation } from "@grammyjs/conversations";
 import {
   bold,
   code,
@@ -60,6 +61,7 @@ import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
 import telegramifyMarkdown from "telegramify-markdown";
+import TGS from "tgs-to";
 import { inspect } from "util";
 import { z } from "zod";
 
@@ -409,59 +411,157 @@ commands.command("config", "Get basic settings", async (ctx) => {
   );
 });
 
-commands.command("personality", "Add personality", async (ctx) => {
+commands.command("personality", "View/Modify personality", async (ctx) => {
   assert(ctx.from);
-  const line = ctx.msg.text.split(" ").slice(1).join(" ");
 
-  if (!line || line.length === 0) {
-    await telegram.sendMessage(ctx.chatId, "Personality not specified!");
+  if (ctx.from.id !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())) {
+    await ctx.reply("Cannot use this command!");
     return;
   }
 
-  await db.insert(tables.personality).values({
-    userId: ctx.from.id,
-    content: line,
+  const personality = await db.query.personality.findMany({
+    columns: {
+      id: true,
+      content: true,
+    },
   });
 
-  await telegram.sendMessage(ctx.chatId, `Updated personality: ${line}`, {
-    disable_notification: true,
-  });
+  const inlineKeyboard = new InlineKeyboard()
+    .text("<< 1", "personality-start")
+    .text("< 1", "personality-1")
+    .text("1", "personality-1")
+    .text("2 >", "personality-2")
+    .text(`${personality.length} >>`, "personality-end")
+    .row()
+    .text("➕ Add", "personality-add")
+    .text("🗑️ Remove", "personality-remove");
+  if (personality.length > 0) {
+    await ctx.reply(personality[0].content, {
+      reply_markup: inlineKeyboard,
+    });
+  } else {
+    await ctx.reply("No personality data found.", {
+      reply_markup: inlineKeyboard,
+    });
+  }
 });
 
-commands.command("delpersonality", "Delete personality", async (ctx) => {
-  const id = parseInt(ctx.msg.text.split(" ")[1]);
-
-  await db.delete(tables.personality).where(eq(tables.personality.id, id));
-
-  await telegram.sendMessage(ctx.chatId, `Deleted personality`, {
-    disable_notification: true,
+const personalityMenu = async (ctx: BotContext, page: number) => {
+  const personality = await db.query.personality.findMany({
+    columns: {
+      id: true,
+      content: true,
+    },
   });
+
+  if (page > personality.length) {
+    await ctx.answerCallbackQuery("You have reached the end of the list");
+    return;
+  }
+
+  if (page < 1) {
+    await ctx.answerCallbackQuery("Unable to go backwards even further");
+    return;
+  }
+
+  const inlineKeyboard = new InlineKeyboard()
+    .text("<< 1", "personality-start")
+    .text(`< ${page - 1}`, `personality-${page - 1}`)
+    .text(`${page}`, `personality-${page}`)
+    .text(`${page + 1} >`, `personality-${page + 1}`)
+    .text(`${personality.length} >>`, "personality-end")
+    .row()
+    .text("➕ Add", "personality-add")
+    .text("🗑️ Remove", `personality-remove-${page}`);
+
+  if (personality.length > 0) {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(personality[page - 1].content, {
+      reply_markup: inlineKeyboard,
+    });
+  } else {
+    await ctx.answerCallbackQuery();
+    await ctx.reply("No personality data found.", {
+      reply_markup: inlineKeyboard,
+    });
+  }
+};
+
+bot.callbackQuery(/personality-(\d+)/, async (ctx) => {
+  logger.debug(`Personality: ${ctx.match}`);
+
+  const personalityPage = parseInt(ctx.match[1]);
+  await personalityMenu(ctx, personalityPage);
 });
 
-commands.command(
-  "getpersonality",
-  "Get all personality records",
-  async (ctx) => {
-    const personality = await db.query.personality.findMany({
-      columns: {
-        id: true,
-        content: true,
-      },
+bot.callbackQuery(/personality-(start|end)/, async (ctx) => {
+  logger.debug(`Personality: ${ctx.match}`);
+
+  const personality = await db.query.personality.findMany({
+    columns: {
+      id: true,
+      content: true,
+    },
+  });
+
+  if (ctx.match[1] === "start") {
+    await personalityMenu(ctx, 1);
+  }
+
+  if (ctx.match[1] === "end") {
+    await personalityMenu(ctx, personality.length);
+  }
+});
+
+bot.use(
+  createConversation(async (conversation, ctx) => {
+    assert(ctx.from);
+
+    await ctx.reply(
+      "Send the content you wish to add to the bot's personality",
+    );
+    const { message } = await conversation.waitFor("message:text");
+    await db.insert(tables.personality).values({
+      userId: ctx.from.id,
+      content: message.text,
     });
 
-    await telegram.sendMessage(
-      ctx.chatId,
-      `Personality:\n${personality.map((line) => `${line.id} - ${line.content}`).join("\n")}`,
-    );
-  },
+    await ctx.reply("Personality added!");
+  }, "personality-add"),
 );
+
+bot.callbackQuery(/personality-add/, async (ctx) => {
+  logger.debug(`Personality: ${ctx.match}`);
+
+  await ctx.conversation.enter("personality-add");
+});
+
+bot.callbackQuery(/personality-remove-(\d+)/, async (ctx) => {
+  logger.debug(`Personality: ${ctx.match}`);
+
+  const personalityPage = parseInt(ctx.match[1]);
+  const personality = await db.query.personality.findMany({
+    columns: {
+      id: true,
+      content: true,
+    },
+  });
+
+  const result = await db
+    .delete(tables.personality)
+    .where(eq(tables.personality.id, personality[personalityPage - 1].id));
+
+  await ctx.reply(`Deleted ${result.rowsAffected} personality record`);
+});
 
 bot.use(commands);
 
 export const activeRequests = new Map<number, AbortController>();
 
-bot.on("message").filter(
+bot.on(["message", "edit:text"]).filter(
   async (ctx) => {
+    assert(ctx.msg.from);
+
     if (ctx.hasChatType("private")) {
       return true;
     }
@@ -474,15 +574,22 @@ bot.on("message").filter(
     return false;
   },
   async (ctx) => {
+    assert(ctx.from);
     const userId = ctx.from.id;
 
     // Cancel the previous request if it exists
     if (activeRequests.has(userId)) {
       activeRequests.get(userId)?.abort();
       activeRequests.delete(userId);
-      await ctx.reply(
-        "⏹️ Previous response interrupted. Processing new request...",
-      );
+      await ctx.replyFmt([
+        italic("⏹️ Previous response interrupted. Processing new request..."),
+      ]);
+    }
+
+    if (ctx.editedMessage) {
+      await ctx.replyFmt([
+        italic("Noticed you edited a message. Revisiting it..."),
+      ]);
     }
 
     const controller = new AbortController();
@@ -544,6 +651,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     const transcribeAudio = async () => {
       if (ctx.msg.video_note || ctx.msg.video) {
+        assert(ctx.from);
         const file = await downloadFile(ctx);
         const inputFileId = createId();
         const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
@@ -848,12 +956,57 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     }
     if (ctx.msg.sticker) {
       const file = await downloadFile(ctx);
-      const image = await sharp(file.localPath)
-        .jpeg({ mozjpeg: true })
-        .toBuffer();
+
+      const images: Buffer[] = [];
+      if (ctx.msg.sticker.is_animated) {
+        const mp4FilePath = await new TGS(file.localPath).convertToMp4(
+          path.join(LOCAL_FILES_DIR, `${createId()}.mp4`),
+        );
+        const frames = await callPython("processVideo", {
+          file_path: mp4FilePath,
+          lang: "en",
+        });
+        for (const result of frames) {
+          images.push(await fs.promises.readFile(result.frame.path));
+        }
+      } else if (ctx.msg.sticker.is_video) {
+        const frames = await callPython("processVideo", {
+          file_path: file.localPath,
+          lang: "en",
+        });
+        for (const result of frames) {
+          images.push(await fs.promises.readFile(result.frame.path));
+        }
+      } else {
+        images.push(
+          await sharp(file.localPath).jpeg({ mozjpeg: true }).toBuffer(),
+        );
+      }
+
+      const { text } = await generateText({
+        model: openai("gpt-4o"),
+        system:
+          "You're a helpful AI assistant that imitates API endpoints for web server that returns info about ANY sticker on Telegram.",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `The user has sent a Telegram sticker: ${JSON.stringify(ctx.msg.sticker)}. Describe everything about it most accurately for another LLM to understand and interpret, and add references to pop culture or things it might look like.`,
+              },
+              ...(images.map((image) => ({
+                type: "image",
+                image,
+              })) as ImagePart[]),
+            ],
+          },
+        ],
+      });
+
       toSend.push({
-        type: "image",
-        image,
+        type: "text",
+        text: `Telegram sticker contents: ${text}`,
       });
     }
     if (ctx.msg.caption) {
@@ -1115,6 +1268,25 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
       });
 
       let textBuffer = "";
+      let firstMessageSent = false;
+
+      const flushBuffer = async () => {
+        // flush the buffer
+        if (textBuffer.trim().length > 0) {
+          const mdv2 = telegramifyMarkdown(textBuffer, "escape");
+          await telegram.sendMessage(ctx.chatId, mdv2, {
+            parse_mode: "MarkdownV2",
+            ...(ctx.editedMessage &&
+              !firstMessageSent && {
+                reply_parameters: {
+                  message_id: ctx.msgId,
+                },
+              }),
+          });
+          textBuffer = "";
+          firstMessageSent = true;
+        }
+      };
 
       for await (const textPart of textStream) {
         textBuffer += textPart;
@@ -1127,25 +1299,11 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           textBuffer = textBuffer.replaceAll("<|message|>", "");
           textBuffer = textBuffer.replaceAll("</|message|>", "");
 
-          // flush the buffer
-          if (textBuffer.trim().length > 0) {
-            const mdv2 = telegramifyMarkdown(textBuffer, "escape");
-            await telegram.sendMessage(ctx.chatId, mdv2, {
-              parse_mode: "MarkdownV2",
-            });
-            textBuffer = "";
-          }
+          await flushBuffer();
         }
       }
 
-      // flush the buffer
-      if (textBuffer.trim().length > 0) {
-        const mdv2 = telegramifyMarkdown(textBuffer, "escape");
-        await telegram.sendMessage(ctx.chatId, mdv2, {
-          parse_mode: "MarkdownV2",
-        });
-        textBuffer = "";
-      }
+      await flushBuffer();
     }
 
     assert(modelUsage, "Model usage not found!");
