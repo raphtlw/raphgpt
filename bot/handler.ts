@@ -56,7 +56,7 @@ import FormData from "form-data";
 import fs from "fs";
 import { globby } from "globby";
 import got from "got";
-import { Context, InlineKeyboard, InputFile } from "grammy";
+import { InlineKeyboard, InputFile } from "grammy";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
@@ -79,7 +79,7 @@ const calculateStripeFee = (cents: number) => {
   return (cents / 100) * 3.4 + 50;
 };
 
-const sendBuyCreditsInvoice = async (ctx: Context, amount: number) => {
+const sendBuyCreditsInvoice = async (ctx: BotContext, amount: number) => {
   if (amount < 100) {
     return await ctx.reply("Min. Amount is $1.");
   }
@@ -104,6 +104,30 @@ const sendBuyCreditsInvoice = async (ctx: Context, amount: number) => {
         "https://storage.googleapis.com/raphgpt-static/duck-token.jpeg",
     },
   );
+};
+
+const deductCredits = async (ctx: BotContext, usage: LanguageModelUsage) => {
+  assert(ctx.from);
+
+  let cost = 0;
+
+  cost += usage.promptTokens * (2.5 / 1_000_000);
+  cost += usage.completionTokens * (10 / 1_000_000);
+
+  // 50% will be taken as fees
+  cost += (cost / 100) * 50;
+
+  cost *= Math.pow(10, 2); // Store value without 2 d.p.
+
+  // Subtract credits from user
+  await db
+    .update(tables.users)
+    .set({
+      credits: sql`${tables.users.credits} - ${cost}`,
+    })
+    .where(eq(tables.users.userId, ctx.from.id));
+
+  logger.debug({ cost }, "Deducted credits");
 };
 
 commands
@@ -799,7 +823,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         .jpeg({ mozjpeg: true })
         .toBuffer();
 
-      const { text } = await generateText({
+      const { text, usage } = await generateText({
         model: openai("gpt-4o"),
         messages: [
           {
@@ -819,6 +843,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           },
         ],
       });
+      await deductCredits(ctx, usage);
 
       toSend.push({
         type: "text",
@@ -1004,7 +1029,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         );
       }
 
-      const { text } = await generateText({
+      const { text, usage } = await generateText({
         model: openai("gpt-4o"),
         system:
           "You're a helpful AI assistant that imitates API endpoints for web server that returns info about ANY sticker on Telegram.",
@@ -1024,6 +1049,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           },
         ],
       });
+      await deductCredits(ctx, usage);
 
       toSend.push({
         type: "text",
@@ -1329,25 +1355,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     assert(modelUsage, "Model usage not found!");
 
-    let cost = 0;
-
-    cost += modelUsage.promptTokens * (2.5 / 1_000_000);
-    cost += modelUsage.completionTokens * (10 / 1_000_000);
-
-    // 50% will be taken as fees
-    cost += (cost / 100) * 50;
-
-    cost *= Math.pow(10, 2); // Store value without 2 d.p.
-
-    // Subtract credits from user
-    await db
-      .update(tables.users)
-      .set({
-        credits: sql`${tables.users.credits} - ${cost}`,
-      })
-      .where(eq(tables.users.userId, ctx.from.id));
-
-    logger.debug({ cost }, "Deducted credits");
+    await deductCredits(ctx, modelUsage);
   },
 );
 
