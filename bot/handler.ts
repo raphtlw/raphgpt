@@ -842,7 +842,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           },
         ],
       });
-      if (userExceedsFreeMessages) {
+      if (userExceedsFreeMessages && !userIsOwner) {
         await deductCredits(ctx, usage);
       }
 
@@ -1050,7 +1050,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
           },
         ],
       });
-      if (userExceedsFreeMessages) {
+      if (userExceedsFreeMessages && !userIsOwner) {
         await deductCredits(ctx, usage);
       }
 
