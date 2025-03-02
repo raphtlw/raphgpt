@@ -1091,8 +1091,8 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     for (const metadata of relevantDocuments.metadatas[0]) {
       assert(metadata, "Metadata is null");
       const relevantTurn = (
-        await kv.lRange(
-          `message_turns:${metadata.chatId}`,
+        await kv.LRANGE(
+          `message_turns:${metadata.chatId}:${userId}`,
           metadata.turnIdx as number,
           metadata.turnIdx as number,
         )
@@ -1108,8 +1108,8 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     }
 
     const messageTurns = (
-      await kv.lRange(
-        `message_turns:${ctx.chatId}`,
+      await kv.LRANGE(
+        `message_turns:${ctx.chatId}:${userId}`,
         -(await getConfigValue(ctx.from.id, "messagehistsize")),
         -1,
       )
