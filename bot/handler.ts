@@ -678,11 +678,9 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
     const userExceedsFreeMessages =
       user.freeTierMessageCount >
       getEnv("FREE_TIER_MESSAGE_DAILY_THRESHOLD", z.coerce.number());
-    if (
-      userExceedsFreeMessages &&
-      user.credits <= 0 &&
-      user.userId !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())
-    ) {
+    const userIsOwner =
+      user.userId === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
+    if (userExceedsFreeMessages && user.credits <= 0 && !userIsOwner) {
       return await ctx.reply(
         "You have run out of credits! Use /topup to get more.",
       );
@@ -1360,15 +1358,17 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
     assert(modelUsage, "Model usage not found!");
 
-    if (userExceedsFreeMessages) {
-      await deductCredits(ctx, modelUsage);
-    } else {
-      await db
-        .update(tables.users)
-        .set({
-          freeTierMessageCount: sql`${tables.users.freeTierMessageCount} + 1`,
-        })
-        .where(eq(tables.users.userId, ctx.from.id));
+    if (!userIsOwner) {
+      if (userExceedsFreeMessages) {
+        await deductCredits(ctx, modelUsage);
+      } else {
+        await db
+          .update(tables.users)
+          .set({
+            freeTierMessageCount: sql`${tables.users.freeTierMessageCount} + 1`,
+          })
+          .where(eq(tables.users.userId, ctx.from.id));
+      }
     }
   },
 );
