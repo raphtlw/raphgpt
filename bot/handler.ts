@@ -1016,7 +1016,7 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
         for (const result of frames) {
           images.push(await fs.promises.readFile(result.frame.path));
         }
-      } else if (ctx.msg.sticker.is_video) {
+      } else if (file.fileType?.mime.startsWith("video")) {
         const frames = await callPython("processVideo", {
           file_path: file.localPath,
           lang: "en",
