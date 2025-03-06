@@ -36,7 +36,7 @@ export const mainFunctions = (data: ToolData) => {
   return {
     search_google: tool({
       description:
-        "Get relevant search results from Google in JSON format. Use this to answer questions that require up to date info, or to get links from web results. Unable to do location searching.",
+        "Get relevant search results from Google in JSON format. Use this to answer questions that require up to date info, or to get links from web results. Unable to do location searching. Result contents are truncated. Use get_link_contents if you want the full text.",
       parameters: z.object({
         query: z.string().describe("Search query"),
         gl: z.string().describe("two-letter country code").optional(),
@@ -94,7 +94,7 @@ export const mainFunctions = (data: ToolData) => {
             // limit content length to fit context size for model
             const enc = encoding_for_model("gpt-4o");
             const tok = enc.encode(markdown);
-            const lim = tok.slice(0, 512);
+            const lim = tok.slice(0, 256);
             const txt = new TextDecoder().decode(enc.decode(lim));
             enc.free();
 
@@ -133,7 +133,7 @@ export const mainFunctions = (data: ToolData) => {
         // limit content length to fit context size for model
         const enc = encoding_for_model("gpt-4o");
         const tok = enc.encode(markdown);
-        const lim = tok.slice(0, 2048);
+        const lim = tok.slice(0, 4096);
         const txt = new TextDecoder().decode(enc.decode(lim));
         enc.free();
 
