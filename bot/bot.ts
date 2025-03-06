@@ -93,7 +93,7 @@ bot.use(async (ctx, next) => {
             await ctx.replyWithChatAction(
               this.kind,
               {
-                message_thread_id: ctx.msg?.message_thread_id,
+                message_thread_id: ctx.msg?.message_thread_id ?? ctx.chatId,
               },
               ctx.chatAction.controller.signal,
             );
@@ -105,7 +105,7 @@ bot.use(async (ctx, next) => {
         await ctx.replyWithChatAction(
           this.kind,
           {
-            message_thread_id: ctx.msg?.message_thread_id,
+            message_thread_id: ctx.msg?.message_thread_id ?? ctx.chatId,
           },
           ctx.chatAction.controller.signal,
         );

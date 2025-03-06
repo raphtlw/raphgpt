@@ -174,8 +174,10 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 commands
   .command("start", "Start the bot")
   .addToScope({ type: "default" }, async (ctx) => {
+    const user = await retrieveUser(ctx);
+
     await ctx.reply(
-      "Hey, what's up? You can send a text, photo, telebubble or a voice message.",
+      `hey ${user.firstName ?? user.lastName}, what's up? You can send a text, photo, telebubble or a voice message.`,
     );
   });
 
@@ -457,40 +459,46 @@ commands.command("config", "Get basic settings", async (ctx) => {
   );
 });
 
-commands.command("personality", "View/Modify personality", async (ctx) => {
-  assert(ctx.from);
+commands.command("personality", "View/Modify personality").addToScope(
+  {
+    type: "chat",
+    chat_id: getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()),
+  },
+  async (ctx) => {
+    assert(ctx.from);
 
-  if (ctx.from.id !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())) {
-    await ctx.reply("Cannot use this command!");
-    return;
-  }
+    if (ctx.from.id !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())) {
+      await ctx.reply("Cannot use this command!");
+      return;
+    }
 
-  const personality = await db.query.personality.findMany({
-    columns: {
-      id: true,
-      content: true,
-    },
-  });
-
-  const inlineKeyboard = new InlineKeyboard()
-    .text("<< 1", "personality-start")
-    .text("< 1", "personality-1")
-    .text("1", "personality-1")
-    .text("2 >", "personality-2")
-    .text(`${personality.length} >>`, "personality-end")
-    .row()
-    .text("➕ Add", "personality-add")
-    .text("🗑️ Remove", "personality-remove");
-  if (personality.length > 0) {
-    await ctx.reply(personality[0].content, {
-      reply_markup: inlineKeyboard,
+    const personality = await db.query.personality.findMany({
+      columns: {
+        id: true,
+        content: true,
+      },
     });
-  } else {
-    await ctx.reply("No personality data found.", {
-      reply_markup: inlineKeyboard,
-    });
-  }
-});
+
+    const inlineKeyboard = new InlineKeyboard()
+      .text("<< 1", "personality-start")
+      .text("< 1", "personality-1")
+      .text("1", "personality-1")
+      .text("2 >", "personality-2")
+      .text(`${personality.length} >>`, "personality-end")
+      .row()
+      .text("➕ Add", "personality-add")
+      .text("🗑️ Remove", "personality-remove");
+    if (personality.length > 0) {
+      await ctx.reply(personality[0].content, {
+        reply_markup: inlineKeyboard,
+      });
+    } else {
+      await ctx.reply("No personality data found.", {
+        reply_markup: inlineKeyboard,
+      });
+    }
+  },
+);
 
 const personalityMenu = async (ctx: BotContext, page: number) => {
   const personality = await db.query.personality.findMany({
