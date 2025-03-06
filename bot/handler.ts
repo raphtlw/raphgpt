@@ -151,6 +151,7 @@ const retrieveUser = async (ctx: BotContext) => {
       .get();
     await ctx.replyFmt(
       fmt`${bold(`Welcome to raphGPT.`)}
+You get ${bold(getEnv("FREE_TIER_MESSAGE_DAILY_THRESHOLD"))} messages per day, resets at 00:00 daily.
 ${italic(`You can get more tokens from the store (/topup)`)}`,
     );
   } else {
@@ -170,6 +171,21 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 
   return user;
 };
+
+if (getEnv("NODE_ENV") === "production") {
+  await bot.api.setMyDescription(
+    "The best AI companion on Telegram! This started as a personal project to create a bot that can do things for me. It can listen to voice messages and watch video messages.",
+    {
+      language_code: "en",
+    },
+  );
+  await bot.api.setMyShortDescription(
+    "Powered by OpenAI. Any inquiries @raphtlw",
+    {
+      language_code: "en",
+    },
+  );
+}
 
 commands
   .command("start", "Start the bot")
