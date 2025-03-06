@@ -110,6 +110,41 @@ export const mainFunctions = (data: ToolData) => {
       },
     }),
 
+    get_link_contents: tool({
+      description: "Get contents from a webpage in Markdown format",
+      parameters: z.object({
+        url: z.string(),
+      }),
+      async execute({ url }) {
+        const page = await BROWSER.newPage();
+        await page.goto(url, {
+          waitUntil: "domcontentloaded",
+        });
+        const html = await page.content();
+
+        logger.debug(html);
+
+        const markdown = await convertHtmlToMarkdown(html);
+
+        logger.debug(markdown);
+
+        await page.close();
+
+        // limit content length to fit context size for model
+        const enc = encoding_for_model("gpt-4o");
+        const tok = enc.encode(markdown);
+        const lim = tok.slice(0, 2048);
+        const txt = new TextDecoder().decode(enc.decode(lim));
+        enc.free();
+
+        if (txt.length > 0) {
+          return txt;
+        } else {
+          return "Webpage content is empty!";
+        }
+      },
+    }),
+
     read_text: tool({
       description:
         "Reads out text for the user to listen to. To be used in a chatbot-like fashion, where the user listens to your speech",
