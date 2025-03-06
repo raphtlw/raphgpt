@@ -130,6 +130,47 @@ const deductCredits = async (ctx: BotContext, usage: LanguageModelUsage) => {
   logger.debug({ cost }, "Deducted credits");
 };
 
+const retrieveUser = async (ctx: BotContext) => {
+  assert(ctx.from, "Tried to retrieve user when no message sender exists!");
+  assert(ctx.chatId, "No chat ID found!");
+
+  let user = await db.query.users.findFirst({
+    where: eq(tables.users.userId, ctx.from.id),
+  });
+  if (!user) {
+    user = await db
+      .insert(tables.users)
+      .values({
+        chatId: ctx.chatId,
+        userId: ctx.from.id,
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+      })
+      .returning()
+      .get();
+    await ctx.replyFmt(
+      fmt`${bold(`Welcome to raphGPT.`)}
+${italic(`You can get more tokens from the store (/topup)`)}`,
+    );
+  } else {
+    user = await db
+      .update(tables.users)
+      .set({
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+      })
+      .where(eq(tables.users.userId, ctx.from.id))
+      .returning()
+      .get();
+  }
+
+  assert(user, "Unable to retrieve user");
+
+  return user;
+};
+
 commands
   .command("start", "Start the bot")
   .addToScope({ type: "default" }, async (ctx) => {
@@ -211,23 +252,7 @@ type PaymentMethodData = {
 
 bot.callbackQuery("payment-method-solana", async (ctx) => {
   // Create user if they don't exist till now
-  let user = await db.query.users.findFirst({
-    where: eq(tables.users.userId, ctx.from.id),
-  });
-  if (!user) {
-    user = await db
-      .insert(tables.users)
-      .values({
-        chatId: ctx.chatId!,
-        userId: ctx.from.id,
-        username: ctx.from.username,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-      })
-      .returning()
-      .get();
-    await ctx.reply("Welcome to raphGPT!");
-  }
+  let user = await retrieveUser(ctx);
   assert(user, "Unable to retrieve user");
 
   // Check if user has existing wallet
@@ -639,38 +664,7 @@ bot.on(["message", "edit:text"]).filter(
 
     await ctx.chatAction.enable(true);
 
-    let user = await db.query.users.findFirst({
-      where: eq(tables.users.userId, ctx.from.id),
-    });
-    if (!user) {
-      const inserted = await db
-        .insert(tables.users)
-        .values({
-          chatId: ctx.chatId,
-          userId: ctx.from.id,
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        })
-        .returning();
-      user = inserted[0];
-      await ctx.replyFmt(
-        fmt`${bold(`Welcome to raphGPT.`)}
-${italic(`You can get more tokens from the store (/topup)`)}`,
-      );
-    } else {
-      const updated = await db
-        .update(tables.users)
-        .set({
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        })
-        .where(eq(tables.users.userId, ctx.from.id))
-        .returning();
-      user = updated[0];
-    }
-    assert(user, "Unable to retrieve user");
+    const user = await retrieveUser(ctx);
 
     // Check if user has enough free messages
     // Check if user has enough credits
