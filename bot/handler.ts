@@ -14,10 +14,10 @@ import { toolbox } from "@/functions/toolbox";
 import { getEnv } from "@/helpers/env.js";
 import { ToolData } from "@/helpers/function";
 import { generateAudio, GenerateTextParams } from "@/helpers/openai";
-import { buildPrompt } from "@/helpers/prompts.js";
-import { callPython } from "@/helpers/python.js";
-import { runModel } from "@/helpers/replicate.js";
-import { runCommand } from "@/helpers/shell.js";
+import { buildPrompt } from "@/helpers/prompts";
+import { callPython } from "@/helpers/python";
+import { runModel } from "@/helpers/replicate";
+import { runCommand } from "@/helpers/shell";
 import {
   handleUserWalletBalanceChange,
   solanaConnection,
