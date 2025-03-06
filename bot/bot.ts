@@ -40,14 +40,6 @@ bot.use(async (ctx, next) => {
 });
 bot.use(async (ctx, next) => {
   ctx.model = openai("o3-mini", { structuredOutputs: false });
-
-  if (
-    ctx.msg &&
-    (ctx.msg.photo || ctx.msg.document || ctx.msg.video || ctx.msg.sticker)
-  ) {
-    ctx.model = openai("gpt-4o");
-  }
-
   await next();
 });
 
