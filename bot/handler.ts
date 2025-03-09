@@ -173,18 +173,24 @@ ${italic(`You can get more tokens from the store (/topup)`)}`,
 };
 
 if (getEnv("NODE_ENV") === "production") {
-  await bot.api.setMyDescription(
-    "The best AI companion on Telegram! This started as a personal project to create a bot that can do things for me. It can listen to voice messages and watch video messages.",
-    {
-      language_code: "en",
-    },
-  );
-  await bot.api.setMyShortDescription(
-    "Powered by OpenAI. Any inquiries @raphtlw",
-    {
-      language_code: "en",
-    },
-  );
+  try {
+    await telegram.setMyDescription(
+      "The best AI companion on Telegram! This started as a personal project to create a bot that can do things for me. It can listen to voice messages and watch video messages.",
+      {
+        language_code: "en",
+      },
+    );
+    await telegram.setMyShortDescription(
+      "Powered by OpenAI. Any inquiries @raphtlw",
+      {
+        language_code: "en",
+      },
+    );
+  } catch {
+    logger.error(
+      "Encountered an error setting the bot's description, but it's okay.",
+    );
+  }
 }
 
 commands
