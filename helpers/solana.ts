@@ -2,7 +2,7 @@ import logger from "@/bot/logger.js";
 import { telegram } from "@/bot/telegram.js";
 import { db, tables } from "@/db/db.js";
 import { getEnv } from "@/helpers/env.js";
-import { bold, fmt } from "@grammyjs/parse-mode";
+import { b, fmt } from "@grammyjs/parse-mode";
 import { Raydium } from "@raydium-io/raydium-sdk-v2";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
@@ -80,7 +80,7 @@ export const handleUserWalletBalanceChange = async (
     const receivedSol =
       (balance - user.solanaWallet.balanceLamports) / LAMPORTS_PER_SOL;
     const usdcPrice = await getUSDCPrice();
-    const message = fmt`Received ${bold(receivedSol)} SOL ($${receivedSol * usdcPrice} USD).`;
+    const message = fmt`Received ${b}${receivedSol}${b} SOL ($${receivedSol * usdcPrice} USD).`;
     await telegram.sendMessage(user.chatId, message.text, {
       entities: message.entities,
     });

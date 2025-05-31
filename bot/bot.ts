@@ -9,7 +9,6 @@ import {
   conversations,
   type ConversationFlavor,
 } from "@grammyjs/conversations";
-import { hydrateReply, ParseModeFlavor } from "@grammyjs/parse-mode";
 import AbortController from "abort-controller";
 import { LanguageModel } from "ai";
 import assert from "assert";
@@ -17,7 +16,7 @@ import { CronJob } from "cron";
 import { isNotNull } from "drizzle-orm";
 import { Bot, GrammyError, HttpError, type Context } from "grammy";
 
-export type BotContext = ParseModeFlavor<ConversationFlavor<Context>> & {
+export type BotContext = ConversationFlavor<Context> & {
   model: LanguageModel;
 
   chatAction: {
@@ -32,14 +31,13 @@ const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
   client: { apiRoot: getEnv("TELEGRAM_API_ROOT") },
 });
 
-bot.use(hydrateReply);
 bot.use(conversations());
 bot.use(async (ctx, next) => {
   logger.debug({ update: ctx.update }, "Update Received");
   await next();
 });
 bot.use(async (ctx, next) => {
-  ctx.model = openai("o3-mini", { structuredOutputs: false });
+  ctx.model = openai("o4-mini", { structuredOutputs: false });
   await next();
 });
 

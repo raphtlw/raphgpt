@@ -27,14 +27,7 @@ import { kv } from "@/kv/redis.js";
 import { openai } from "@ai-sdk/openai";
 import { CommandGroup } from "@grammyjs/commands";
 import { createConversation } from "@grammyjs/conversations";
-import {
-  bold,
-  code,
-  fmt,
-  italic,
-  ParseModeFlavor,
-  underline,
-} from "@grammyjs/parse-mode";
+import { b, code, fmt, i, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import {
@@ -65,7 +58,7 @@ import TGS from "tgs-to";
 import { inspect } from "util";
 import { z } from "zod";
 
-const commands = new CommandGroup<ParseModeFlavor<BotContext>>();
+const commands = new CommandGroup<BotContext>();
 
 const dollars = (cents: number) => {
   return cents / Math.pow(10, 2);
@@ -149,11 +142,12 @@ const retrieveUser = async (ctx: BotContext) => {
       })
       .returning()
       .get();
-    await ctx.replyFmt(
-      fmt`${bold(`Welcome to raphGPT.`)}
-You get ${bold(getEnv("FREE_TIER_MESSAGE_DAILY_THRESHOLD"))} messages per day, resets at 00:00 daily.
-${italic(`You can get more tokens from the store (/topup)`)}`,
-    );
+    const welcomeNotification = fmt`${b}Welcome to raphGPT.${b}
+You get ${b}${getEnv("FREE_TIER_MESSAGE_DAILY_THRESHOLD")}${b} messages per day, resets at 00:00 daily.
+${i}You can get more tokens from the store (/topup)${i}`;
+    await ctx.reply(welcomeNotification.text, {
+      entities: welcomeNotification.entities,
+    });
   } else {
     user = await db
       .update(tables.users)
@@ -216,10 +210,11 @@ commands.command("balance", "Check account balance", async (ctx) => {
 
   if (!user) return await ctx.reply("User not found");
 
-  await ctx.replyFmt(
-    fmt`User ID: ${bold(`${user.id}`)}
-Balance: ${bold(`${dollars(user.credits)}`)}`,
-  );
+  const balanceMessage = fmt`
+User ID: ${b}${user.id}${b}
+Balance: ${b}${dollars(user.credits)}${b}`;
+
+  await ctx.reply(balanceMessage.text, { entities: balanceMessage.entities });
 });
 
 commands.command("clear", "Clear conversation history", async (ctx) => {
@@ -256,7 +251,7 @@ commands.command("topup", "Get more tokens", async (ctx) => {
     amountDollars = parseFloat(cmd[1]);
   }
 
-  const msg = await ctx.replyFmt(fmt`Choose a payment method`, {
+  const msg = await ctx.reply("Choose a payment method", {
     reply_markup: new InlineKeyboard()
       .text("Solana", "payment-method-solana")
       .text("Stripe (3.4% + S$0.50 fees)", "payment-method-stripe"),
@@ -311,9 +306,10 @@ bot.callbackQuery("payment-method-solana", async (ctx) => {
 
   // Notify user of current SOL price
   // await telegram.sendMessage(ctx.chatId!, `SOL current price is ${averagePrice} USD`)
-  await ctx.replyFmt(
-    fmt`The amount you send to this address will be used to top up your wallet: ${code(wallet.publicKey)}`,
-  );
+  const topupNotification = fmt`The amount you send to this address will be used to top up your wallet: ${code}${wallet.publicKey}${code}`;
+  await ctx.reply(topupNotification.text, {
+    entities: topupNotification.entities,
+  });
   solanaConnection.onAccountChange(
     new PublicKey(wallet.publicKey),
     async (updatedAccountInfo) => {
@@ -335,7 +331,7 @@ bot.callbackQuery("payment-method-solana", async (ctx) => {
       await handleUserWalletBalanceChange(user as any);
     },
   );
-  await ctx.replyFmt(fmt`Listening for incoming transactions...`);
+  await ctx.reply("Listening for incoming transactions...");
 
   await kv.del(`callback_data:${ctx.callbackQuery.message?.message_id}`);
 });
@@ -413,7 +409,7 @@ bot.on("msg:successful_payment", async (ctx) => {
     .returning()
     .get();
 
-  await ctx.replyFmt(`Thanks for your purchase!`);
+  await ctx.reply("Thanks for your purchase!");
   await telegram.sendMessage(
     ctx.chatId,
     `You have $${user.credits} in credits now`,
@@ -430,32 +426,29 @@ commands.command("set", "Set basic settings", async (ctx) => {
   const value = cmd[2];
 
   if (!key) {
-    await ctx.replyFmt(
-      fmt([
-        underline(bold("[HELP]")),
-        "\n",
-        "Available settings:\n",
-        (
-          Object.keys(configSchema.shape) as Array<
-            keyof typeof configSchema.shape
-          >
-        )
-          .map((key) => `- ${key} - ${configSchema.shape[key].description}`)
-          .join("\n"),
-      ]),
-    );
+    const settingsMessage = fmt`${underline}${b}[HELP]${b}${underline}
+Available settings:
+${(Object.keys(configSchema.shape) as Array<keyof typeof configSchema.shape>)
+  .map((key) => `- ${key} - ${configSchema.shape[key].description}`)
+  .join("\n")}
+`;
 
-    return await ctx.replyFmt(
-      fmt([
-        "Please specify key to set.\n",
-        "Available options: ",
-        Object.keys(configSchema.shape).join(", "),
-      ]),
-    );
+    await ctx.reply(settingsMessage.text, {
+      entities: settingsMessage.entities,
+    });
+
+    const specifyKeyMessage = fmt`Please specify key to set.
+Available options:
+${Object.keys(configSchema.shape).join(", ")}
+`;
+
+    return await ctx.reply(specifyKeyMessage.text, {
+      entities: specifyKeyMessage.entities,
+    });
   }
 
   if (!value) {
-    return await ctx.replyFmt(fmt(["Please specify value."]));
+    return await ctx.reply("Please specify value.");
   }
 
   configSchema.partial().parse({ [key]: value });
@@ -470,15 +463,14 @@ commands.command("config", "Get basic settings", async (ctx) => {
 
   const result = await kv.HGETALL(`config:${ctx.from.id}`);
 
-  await ctx.replyFmt(
-    fmt(["Settings ", code(JSON.stringify(result, undefined, 4))]),
-    {
-      reply_parameters: {
-        message_id: ctx.msgId,
-        allow_sending_without_reply: true,
-      },
+  const settingsMessage = fmt`Settings ${code}${JSON.stringify(result, undefined, 4)}${code}`;
+  await ctx.reply(settingsMessage.text, {
+    entities: settingsMessage.entities,
+    reply_parameters: {
+      message_id: ctx.msgId,
+      allow_sending_without_reply: true,
     },
-  );
+  });
 });
 
 commands.command("personality", "View/Modify personality").addToScope(
@@ -647,7 +639,7 @@ commands.command(
     // Remove all pending requests
     await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);
 
-    await ctx.replyFmt([bold("Stopped thinking")]);
+    await ctx.reply("Stopped thinking");
   },
 );
 
@@ -678,15 +670,17 @@ bot.on(["message", "edit:text"]).filter(
     if (activeRequests.has(userId)) {
       activeRequests.get(userId)?.abort();
       activeRequests.delete(userId);
-      await ctx.replyFmt([
-        italic("⏹️ Previous response interrupted. Processing new request..."),
-      ]);
+      const interruptionNotification = fmt`${i}⏹️ Previous response interrupted. Processing new request...${i}`;
+      await ctx.reply(interruptionNotification.text, {
+        entities: interruptionNotification.entities,
+      });
     }
 
     if (ctx.editedMessage) {
-      await ctx.replyFmt([
-        italic("Noticed you edited a message. Revisiting it..."),
-      ]);
+      const editedMessageNotification = fmt`${i}Noticed you edited a message. Revisiting it...${i}`;
+      await ctx.reply(editedMessageNotification.text, {
+        entities: editedMessageNotification.entities,
+      });
     }
 
     const controller = new AbortController();

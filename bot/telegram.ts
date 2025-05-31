@@ -26,7 +26,7 @@ export const downloadFile = async (
     logger.debug(telegramFile);
 
     // Construct file URL
-    const fileUrl = `https://${getEnv("TELEGRAM_API_FILES_ROOT")}/${getEnv("TELEGRAM_BOT_TOKEN")}/${telegramFile.file_path}`;
+    const fileUrl = `${getEnv("TELEGRAM_API_ROOT")}/file/bot${getEnv("TELEGRAM_BOT_TOKEN")}/${telegramFile.file_path}`;
 
     // Download file
     const localPath = path.join(LOCAL_FILES_DIR, createId());

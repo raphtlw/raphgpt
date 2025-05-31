@@ -10,7 +10,7 @@ import { convertHtmlToMarkdown } from "@/helpers/markdown.js";
 import { runModel } from "@/helpers/replicate.js";
 import { runCommand } from "@/helpers/shell.js";
 import { kv } from "@/kv/redis";
-import { bold, fmt, italic } from "@grammyjs/parse-mode";
+import { b, fmt, i } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { tool } from "ai";
 import axios from "axios";
@@ -372,7 +372,7 @@ export const mainFunctions = (data: ToolData) => {
           },
         );
 
-        const caption = fmt([fmt`\n${bold("Prompt")}: ${italic(prompt)}`]);
+        const caption = fmt`${b}Prompt${b}: ${i}${prompt}${i}`;
 
         await telegram.sendPhoto(data.chatId, output[0], {
           caption: caption.text,
@@ -460,12 +460,9 @@ export const mainFunctions = (data: ToolData) => {
 
         const url = `${getEnv("RAPHTLW_URL")}/raphgpt/${result.doc._id}`;
 
-        const publishNotification = fmt([
-          "I've published a new webpage.",
-          "\n",
-          "You can view it at this URL: ",
-          url,
-        ]);
+        const publishNotification = fmt`I've published a new webpage.
+You can view it at this URL:
+${url}`;
         await telegram.sendMessage(data.chatId, publishNotification.text, {
           entities: publishNotification.entities,
           reply_parameters: {
