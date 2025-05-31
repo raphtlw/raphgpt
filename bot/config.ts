@@ -1,6 +1,6 @@
 import { WHISPER_LANGUAGES } from "@/bot/constants";
-import logger from "@/bot/logger.js";
-import { kv } from "@/kv/redis.js";
+import logger from "@/bot/logger";
+import { kv } from "@/kv/redis";
 import { z } from "zod";
 
 export const configSchema = z.object({

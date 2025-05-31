@@ -1,8 +1,8 @@
 import { TYPING_INDICATOR_DURATION } from "@/bot/constants";
 import { activeRequests } from "@/bot/handler";
-import logger from "@/bot/logger.js";
-import { db, tables } from "@/db/db.js";
-import { getEnv } from "@/helpers/env.js";
+import logger from "@/bot/logger";
+import { db, tables } from "@/db/db";
+import { getEnv } from "@/helpers/env";
 import { handleUserWalletBalanceChange } from "@/helpers/solana.js";
 import { openai } from "@ai-sdk/openai";
 import {
@@ -10,7 +10,7 @@ import {
   type ConversationFlavor,
 } from "@grammyjs/conversations";
 import AbortController from "abort-controller";
-import { LanguageModel } from "ai";
+import { type LanguageModel } from "ai";
 import assert from "assert";
 import { CronJob } from "cron";
 import { isNotNull } from "drizzle-orm";

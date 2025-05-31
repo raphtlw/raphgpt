@@ -1,8 +1,6 @@
 # raphGPT
 
-### Useful tools
-
-- https://stefanterdell.github.io/json-schema-to-zod-react/
+multipurpose telegram bot for personal usage.
 
 ## Development
 

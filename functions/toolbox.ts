@@ -3,7 +3,7 @@ import logger from "@/bot/logger.js";
 import { telegram } from "@/bot/telegram";
 import { chroma } from "@/db/chroma";
 import { getEnv } from "@/helpers/env";
-import { ToolData } from "@/helpers/function";
+import type { ToolData } from "@/helpers/function";
 import { openai } from "@ai-sdk/openai";
 import { resolve } from "@bonfida/spl-name-service";
 import { createId } from "@paralleldrive/cuid2";
@@ -13,18 +13,21 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey,
 } from "@solana/web3.js";
-import { generateObject, generateText, ImagePart, Tool, tool } from "ai";
+import {
+  generateObject,
+  generateText,
+  type ImagePart,
+  type Tool,
+  tool,
+} from "ai";
 import { AnkiApkgBuilderFactory } from "anki-apkg-builder";
 import assert from "assert";
 import { Collection, DefaultEmbeddingFunction } from "chromadb";
 import { format } from "date-fns";
-import fs from "fs";
-import got from "got";
 import { InputFile } from "grammy";
 import path from "path";
 import pdf2pic from "pdf2pic";
-import { BufferResponse } from "pdf2pic/dist/types/convertResponse";
-import { pipeline as streamPipeline } from "stream/promises";
+import type { BufferResponse } from "pdf2pic/dist/types/convertResponse";
 import { inspect } from "util";
 import { z } from "zod";
 
@@ -209,9 +212,9 @@ export const toolbox = async (data: ToolData, query: string | string[]) => {
           q: query,
           fileType: "pdf",
         });
-        const res = await got(
+        const res: any = await fetch(
           `https://customsearch.googleapis.com/customsearch/v1?` + params,
-        ).json<any>();
+        ).then((res) => res.json());
         logger.debug(res, "Google Search Response");
 
         const results: {
@@ -232,9 +235,8 @@ export const toolbox = async (data: ToolData, query: string | string[]) => {
           try {
             // Download file
             const localPath = path.join(LOCAL_FILES_DIR, createId());
-            await streamPipeline(
-              got.stream(results[i].link),
-              fs.createWriteStream(localPath),
+            await fetch(results[i]!.link).then((res) =>
+              Bun.write(localPath, res),
             );
             const pdfData = await pdf2pic.fromPath(localPath).bulk(-1, {
               responseType: "buffer",

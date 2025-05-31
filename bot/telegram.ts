@@ -3,12 +3,10 @@ import logger from "@/bot/logger.js";
 import { getEnv } from "@/helpers/env.js";
 import { createId } from "@paralleldrive/cuid2";
 import assert from "assert";
-import { fileTypeFromBuffer, FileTypeResult } from "file-type";
+import { fileTypeFromBuffer, type FileTypeResult } from "file-type";
 import fs from "fs";
-import got from "got";
 import { Api, Context } from "grammy";
 import path from "path";
-import { pipeline as streamPipeline } from "stream/promises";
 
 export const telegram = new Api(getEnv("TELEGRAM_BOT_TOKEN"), {
   apiRoot: getEnv("TELEGRAM_API_ROOT"),
@@ -30,7 +28,7 @@ export const downloadFile = async (
 
     // Download file
     const localPath = path.join(LOCAL_FILES_DIR, createId());
-    await streamPipeline(got.stream(fileUrl), fs.createWriteStream(localPath));
+    await fetch(fileUrl).then((res) => Bun.write(localPath, res));
 
     // Detect file type
     const fileType = await fileTypeFromBuffer(

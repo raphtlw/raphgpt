@@ -5,7 +5,7 @@ import { telegram } from "@/bot/telegram.js";
 import { db, tables } from "@/db/db.js";
 import { BROWSER } from "@/helpers/browser.js";
 import { getEnv } from "@/helpers/env.js";
-import { ToolData } from "@/helpers/function";
+import { type ToolData } from "@/helpers/function";
 import { convertHtmlToMarkdown } from "@/helpers/markdown.js";
 import { runModel } from "@/helpers/replicate.js";
 import { runCommand } from "@/helpers/shell.js";
@@ -16,12 +16,10 @@ import { tool } from "ai";
 import axios from "axios";
 import { eq } from "drizzle-orm";
 import fs from "fs";
-import got from "got";
 import { InputFile } from "grammy";
 import * as mathjs from "mathjs";
 import path from "path";
 import Replicate from "replicate";
-import { pipeline as streamPipeline } from "stream/promises";
 import { encoding_for_model } from "tiktoken";
 import { z } from "zod";
 
@@ -58,9 +56,9 @@ export const mainFunctions = (data: ToolData) => {
         if (gl) params.append("gl", gl);
         if (link_site) params.append("linkSite", link_site);
         if (search_type) params.append("searchType", search_type);
-        const res = await got(
+        const res: any = await fetch(
           `https://customsearch.googleapis.com/customsearch/v1?` + params,
-        ).json<any>();
+        ).then((res) => res.json());
         logger.debug(res, "Google Search Response");
 
         const results: {
@@ -78,7 +76,7 @@ export const mainFunctions = (data: ToolData) => {
         for (let i = 0; i < 5; i++) {
           try {
             const page = await BROWSER.newPage();
-            await page.goto(results[i].link, {
+            await page.goto(results[i]!.link, {
               waitUntil: "domcontentloaded",
             });
             const html = await page.content();
@@ -99,7 +97,7 @@ export const mainFunctions = (data: ToolData) => {
             enc.free();
 
             if (txt.length > 0) {
-              results[i].content = txt;
+              results[i]!.content = txt;
             }
           } catch (e) {
             console.error(e);
@@ -181,10 +179,7 @@ export const mainFunctions = (data: ToolData) => {
           );
         const spokenPath = path.join(DATA_DIR, `voice-${createId()}.wav`);
         const outputPath = `${spokenPath.split(".")[0]}.ogg`;
-        await streamPipeline(
-          got.stream(spoken.audio_out),
-          fs.createWriteStream(spokenPath),
-        );
+        await fetch(spoken.audio_out).then((res) => Bun.write(spokenPath, res));
         await runCommand(
           `ffmpeg -i ${spokenPath} -acodec libopus -filter:a "volume=4dB" ${outputPath}`,
         );
@@ -229,14 +224,16 @@ export const mainFunctions = (data: ToolData) => {
       async execute({ text_query, lat, lon }) {
         logger.debug({ text_query, lat, lon });
 
-        const res = await got
-          .post("https://places.googleapis.com/v1/places:searchText", {
+        const res: any = await fetch(
+          "https://places.googleapis.com/v1/places:searchText",
+          {
             headers: {
               "X-Goog-Api-Key": getEnv("GOOGLE_MAPS_API_KEY"),
               "X-Goog-FieldMask":
                 "places.displayName,places.formattedAddress,places.priceLevel,places.googleMapsUri,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions",
             },
-            json: {
+            method: "POST",
+            body: JSON.stringify({
               textQuery: text_query,
               ...(lat &&
                 lon && {
@@ -251,9 +248,9 @@ export const mainFunctions = (data: ToolData) => {
                   },
                 }),
               pageSize: 5,
-            },
-          })
-          .json();
+            }),
+          },
+        ).then((res) => res.json());
 
         return res;
       },
@@ -374,7 +371,7 @@ export const mainFunctions = (data: ToolData) => {
 
         const caption = fmt`${b}Prompt${b}: ${i}${prompt}${i}`;
 
-        await telegram.sendPhoto(data.chatId, output[0], {
+        await telegram.sendPhoto(data.chatId, output[0]!, {
           caption: caption.text,
           caption_entities: caption.entities,
           reply_parameters: {
@@ -395,17 +392,15 @@ export const mainFunctions = (data: ToolData) => {
         units: z.enum(["standard", "metric", "imperial"]),
       }),
       async execute({ lat, lon, units }) {
-        const res = await got(
-          "https://api.openweathermap.org/data/3.0/onecall",
-          {
-            searchParams: {
-              lat,
-              lon,
-              units,
+        const res = await fetch(
+          "https://api.openweathermap.org/data/3.0/onecall?" +
+            new URLSearchParams({
+              lat: String(lat),
+              lon: String(lon),
+              units: String(units),
               appid: getEnv("OPENWEATHER_API_KEY"),
-            },
-          },
-        ).json();
+            }),
+        ).then((res) => res.json());
 
         logger.debug(res, "OpenWeather API response");
 

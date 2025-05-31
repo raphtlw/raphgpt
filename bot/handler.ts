@@ -1,4 +1,4 @@
-import { bot, BotContext } from "@/bot/bot.js";
+import { bot, type BotContext } from "@/bot/bot.js";
 import { configSchema, getConfigValue } from "@/bot/config.js";
 import {
   DATA_DIR,
@@ -12,8 +12,8 @@ import { db, tables } from "@/db/db.js";
 import { mainFunctions } from "@/functions/main.js";
 import { toolbox } from "@/functions/toolbox";
 import { getEnv } from "@/helpers/env.js";
-import { ToolData } from "@/helpers/function";
-import { generateAudio, GenerateTextParams } from "@/helpers/openai";
+import type { ToolData } from "@/helpers/function";
+import { generateAudio, type GenerateTextParams } from "@/helpers/openai";
 import { buildPrompt } from "@/helpers/prompts";
 import { callPython } from "@/helpers/python";
 import { runModel } from "@/helpers/replicate";
@@ -31,24 +31,22 @@ import { b, code, fmt, i, underline } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import {
-  CoreMessage,
-  FilePart,
+  type CoreMessage,
+  type FilePart,
   generateText,
-  ImagePart,
-  LanguageModelUsage,
+  type ImagePart,
+  type LanguageModelUsage,
   streamText,
-  TextPart,
-  ToolCallPart,
-  ToolContent,
-  UserContent,
+  type TextPart,
+  type ToolCallPart,
+  type ToolContent,
+  type UserContent,
 } from "ai";
 import assert from "assert";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { fileTypeFromBuffer } from "file-type";
-import FormData from "form-data";
 import fs from "fs";
 import { globby } from "globby";
-import got from "got";
 import { InlineKeyboard, InputFile } from "grammy";
 import path from "path";
 import pdf2pic from "pdf2pic";
@@ -248,7 +246,7 @@ commands.command("topup", "Get more tokens", async (ctx) => {
   const cmd = ctx.msg.text.split(" ");
   let amountDollars: number | null = null;
   if (cmd.length > 1) {
-    amountDollars = parseFloat(cmd[1]);
+    amountDollars = parseFloat(cmd[1]!);
   }
 
   const msg = await ctx.reply("Choose a payment method", {
@@ -371,7 +369,7 @@ bot.callbackQuery("payment-method-stripe", async (ctx) => {
 bot.callbackQuery(/deposit-amount-(\d+)/, async (ctx) => {
   logger.debug(`deposit-amount matched: ${ctx.match}`);
 
-  await sendBuyCreditsInvoice(ctx, parseInt(ctx.match[1]));
+  await sendBuyCreditsInvoice(ctx, parseInt(ctx.match[1]!));
 });
 
 bot.callbackQuery("cancel", async (ctx) => {
@@ -503,7 +501,7 @@ commands.command("personality", "View/Modify personality").addToScope(
       .text("➕ Add", "personality-add")
       .text("🗑️ Remove", "personality-remove");
     if (personality.length > 0) {
-      await ctx.reply(personality[0].content, {
+      await ctx.reply(personality[0]!.content, {
         reply_markup: inlineKeyboard,
       });
     } else {
@@ -544,7 +542,7 @@ const personalityMenu = async (ctx: BotContext, page: number) => {
 
   if (personality.length > 0) {
     await ctx.answerCallbackQuery();
-    await ctx.reply(personality[page - 1].content, {
+    await ctx.reply(personality[page - 1]!.content, {
       reply_markup: inlineKeyboard,
     });
   } else {
@@ -558,7 +556,7 @@ const personalityMenu = async (ctx: BotContext, page: number) => {
 bot.callbackQuery(/personality-(\d+)/, async (ctx) => {
   logger.debug(`Personality: ${ctx.match}`);
 
-  const personalityPage = parseInt(ctx.match[1]);
+  const personalityPage = parseInt(ctx.match[1]!);
   await personalityMenu(ctx, personalityPage);
 });
 
@@ -607,7 +605,7 @@ bot.callbackQuery(/personality-add/, async (ctx) => {
 bot.callbackQuery(/personality-remove-(\d+)/, async (ctx) => {
   logger.debug(`Personality: ${ctx.match}`);
 
-  const personalityPage = parseInt(ctx.match[1]);
+  const personalityPage = parseInt(ctx.match[1]!);
   const personality = await db.query.personality.findMany({
     columns: {
       id: true,
@@ -617,7 +615,7 @@ bot.callbackQuery(/personality-remove-(\d+)/, async (ctx) => {
 
   const result = await db
     .delete(tables.personality)
-    .where(eq(tables.personality.id, personality[personalityPage - 1].id));
+    .where(eq(tables.personality.id, personality[personalityPage - 1]!.id));
 
   await ctx.reply(`Deleted ${result.rowsAffected} personality record`);
 });
@@ -896,17 +894,20 @@ bot.on(["message", "edit:text"]).filter(
           });
 
           const form = new FormData();
-          form.append("files", fs.createReadStream(file.localPath));
+          form.append("files", Bun.file(file.localPath));
 
-          const converted = await got
-            .post(`${getEnv("GOTENBERG_URL")}/forms/libreoffice/convert`, {
+          const converted = await fetch(
+            `${getEnv("GOTENBERG_URL")}/forms/libreoffice/convert`,
+            {
+              method: "POST",
               body: form,
-              headers: {},
-            })
-            .buffer();
-          const pdfPages = await pdf2pic.fromBuffer(converted).bulk(-1, {
-            responseType: "buffer",
-          });
+            },
+          ).then((res) => res.arrayBuffer());
+          const pdfPages = await pdf2pic
+            .fromBuffer(Buffer.from(converted))
+            .bulk(-1, {
+              responseType: "buffer",
+            });
 
           for (const page of pdfPages) {
             const resized = await sharp(page.buffer)
@@ -1106,7 +1107,7 @@ bot.on(["message", "edit:text"]).filter(
 
     // For each document, get the original message turn
     const messages: CoreMessage[] = [];
-    for (const metadata of relevantDocuments.metadatas[0]) {
+    for (const metadata of relevantDocuments.metadatas[0]!) {
       assert(metadata, "Metadata is null");
       const relevantTurn = (
         await kv.LRANGE(
