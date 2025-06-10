@@ -1,0 +1,33 @@
+services:
+  telegram-bot:
+    build: ./telegram-bot
+    develop:
+      watch:
+        - path: ./telegram-bot
+          action: sync+restart
+          target: /app
+          ignore:
+            - node_modules/
+        - path: ./telegram-bot/package.json
+          action: rebuild
+    env_file: .env
+
+  video-parser:
+    platform: linux/amd64
+    build: ./video-parser
+    develop:
+      watch:
+        - path: ./video-parser
+          action: sync+restart
+          target: /app
+          ignore:
+            - .venv/
+        - path: ./video-parser/pyproject.toml
+          action: rebuild
+    env_file: .env
+
+  browserless:
+    image: ghcr.io/browserless/chromium
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
