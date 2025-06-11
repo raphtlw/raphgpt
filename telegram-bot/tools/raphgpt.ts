@@ -211,6 +211,33 @@ export function raphgptTools(data: ToolData) {
       },
     }),
 
+    /**
+     * Get bus arrival timings for a Singapore bus stop using ArriveLah API.
+     * Input: stop_id (bus stop ID/code). API responses are cached for 15 seconds.
+     */
+    get_bus_arrival_timings: tool({
+      description:
+        "Get bus arrival timings for a Singapore bus stop using ArriveLah API. Input must be a bus stop ID/code. Responses are cached for 15 seconds.",
+      parameters: z.object({
+        stop_id: z.string().describe("Bus stop ID/code"),
+      }),
+      async execute({ stop_id }) {
+        try {
+          const resp = await fetch(
+            `https://arrivelah2.busrouter.sg/?id=${encodeURIComponent(stop_id)}`,
+          );
+          if (!resp.ok) {
+            const text = await resp.text();
+            return `Error: Failed to fetch bus arrivals: ${resp.status} ${text}`;
+          }
+          const data = await resp.json();
+          return data;
+        } catch (err: any) {
+          return `Error: ${err.message}`;
+        }
+      },
+    }),
+
     generate_image: tool({
       description:
         "Generate an image using a model available on Replicate.ai." +
