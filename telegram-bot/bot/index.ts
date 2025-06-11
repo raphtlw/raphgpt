@@ -9,7 +9,7 @@ import {
 } from "@grammyjs/conversations";
 import { commands as botCommands } from "bot/commands";
 import { PRODUCTION } from "bot/constants";
-import { activeRequests, handler } from "bot/handler";
+import { handler } from "bot/handler";
 import logger from "bot/logger";
 import { ChatAction } from "bot/running-tasks";
 import {
@@ -24,10 +24,11 @@ import fs from "node:fs/promises";
 import { getEnv } from "utils/env";
 
 export type SessionData = {
+  task: AbortController | null;
+  tempFiles: string[];
   topupAmountDollars: number | null;
   pendingPaymentInvoicePayload: string | null;
   chatAction: ChatAction | null;
-  tempFiles: string[];
 };
 
 export type BotContext = SessionFlavor<SessionData> &
@@ -94,13 +95,15 @@ bot.filter(commandNotFound(botCommands)).use(async (ctx) => {
   }
 });
 
-bot.use(handler);
-
+// Post-handler cleanup
 bot.use(async (ctx, next) => {
   try {
     await next();
   } finally {
-    if (ctx.session.tempFiles?.length) {
+    ctx.session.task = null;
+    ctx.session.chatAction?.stop();
+
+    if (ctx.session.tempFiles?.length > 0) {
       for (const filePath of ctx.session.tempFiles) {
         try {
           await fs.rm(filePath, { force: true });
@@ -112,6 +115,8 @@ bot.use(async (ctx, next) => {
     }
   }
 });
+
+bot.use(handler);
 
 bot.use(async (ctx, next) => {
   const before = Date.now();
@@ -125,12 +130,11 @@ bot.use(async (ctx, next) => {
 });
 
 bot.catch(async ({ error, ctx, message }) => {
-  if (ctx.from) {
-    activeRequests.delete(ctx.from.id);
-  }
-
   if (ctx.session.chatAction) {
     ctx.session.chatAction.stop();
+  }
+  if (ctx.session.task) {
+    ctx.session.task.abort();
   }
 
   logger.error(error, `Error while handling update ${ctx.update.update_id}`);

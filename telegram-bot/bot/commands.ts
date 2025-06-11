@@ -4,7 +4,7 @@ import { b, code, fmt, u } from "@grammyjs/parse-mode";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import type { BotContext } from "bot";
 import { configSchema } from "bot/config";
-import { activeRequests, handler } from "bot/handler";
+import { handler } from "bot/handler";
 import { retrieveUser } from "bot/helpers";
 import logger from "bot/logger";
 import { telegram } from "bot/telegram";
@@ -549,10 +549,7 @@ commands.command(
     if (!ctx.from) throw new Error("ctx.from not found");
     const userId = ctx.from.id;
 
-    if (activeRequests.has(userId)) {
-      activeRequests.get(userId)?.abort();
-      activeRequests.delete(userId);
-    }
+    ctx.session.task?.abort();
 
     // Remove all pending requests
     await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);

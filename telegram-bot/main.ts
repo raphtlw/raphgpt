@@ -41,6 +41,7 @@ if (!fs.existsSync(TEMP_DIR)) {
 freeTierResetJob.start();
 checkWalletJob.start();
 
+// Start telegram bot
 const handle = run(bot);
 await handle.task();
 

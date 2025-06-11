@@ -1,6 +1,5 @@
 import { tool, type ToolSet } from "ai";
 import { type BotContext } from "bot";
-import { activeRequests } from "bot/handler";
 import { telegram } from "bot/telegram";
 import { kv } from "connections/redis";
 import { db, tables } from "db";
@@ -82,10 +81,7 @@ export function telegramTools(ctx: BotContext): ToolSet {
       description: "Interrupt and stop thinking of a response",
       parameters: z.object({}),
       async execute() {
-        if (activeRequests.has(ctx.from?.id!)) {
-          activeRequests.get(ctx.from?.id!)?.abort();
-          activeRequests.delete(ctx.from?.id!);
-        }
+        ctx.session.task?.abort();
 
         await kv.DEL(`pending_requests:${ctx.chatId}:${ctx.from?.id}`);
 

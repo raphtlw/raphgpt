@@ -11,6 +11,10 @@ export const telegram = new Api(getEnv("TELEGRAM_BOT_TOKEN"), {
   apiRoot: getEnv("TELEGRAM_API_URL"),
 });
 
+/**
+ * Downloads a file from Telegram, using the API hosted
+ * at the environment variable TELEGRAM_API_URL to TEMP_DIR.
+ */
 export const downloadFile = async (
   ctx: Context,
 ): Promise<{

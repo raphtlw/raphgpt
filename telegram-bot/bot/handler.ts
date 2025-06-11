@@ -34,6 +34,7 @@ import superjson from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
 import { raphgptTools, type ToolData } from "tools/raphgpt";
+import { telegramTools } from "tools/telegram";
 import { getEnv } from "utils/env";
 import { buildPrompt } from "utils/prompt";
 import TGS from "utils/tgs";
@@ -42,17 +43,15 @@ import { z } from "zod";
 
 export const handler = new Composer<BotContext>();
 
-export const activeRequests = new Map<number, AbortController>();
-
 handler.on(["message", "edit:text"]).filter(
   async (ctx) => {
-    if (!ctx.msg.from) throw new Error("ctx.msg.from not found");
+    if (!ctx.from) throw new Error("ctx.from not found");
 
     if (ctx.hasChatType("private")) {
       return true;
     }
     if (
-      ctx.msg.from.id === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()) &&
+      ctx.from.id === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()) &&
       ctx.msg.text?.startsWith("-bot ")
     ) {
       return true;
@@ -66,9 +65,8 @@ handler.on(["message", "edit:text"]).filter(
     const chatId = ctx.chatId;
 
     // Cancel the previous request if it exists
-    if (activeRequests.has(userId)) {
-      activeRequests.get(userId)?.abort();
-      activeRequests.delete(userId);
+    if (ctx.session.task) {
+      ctx.session.task.abort();
       const interruptionNotification = fmt`${i}⏹️ Previous response interrupted. Processing new request...${i}`;
       await ctx.reply(interruptionNotification.text, {
         entities: interruptionNotification.entities,
@@ -82,8 +80,7 @@ handler.on(["message", "edit:text"]).filter(
       });
     }
 
-    const controller = new AbortController();
-    activeRequests.set(userId, controller);
+    ctx.session.task = new AbortController();
 
     const user = await retrieveUser(ctx);
 
@@ -142,6 +139,7 @@ handler.on(["message", "edit:text"]).filter(
           batch_size: 64,
           diarise_audio: false,
         },
+        ctx.session.task.signal,
       );
 
       toSend.push({ type: "text", text: transcript.text });
@@ -494,10 +492,13 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       superjson.stringify(toSend),
     );
 
-    const tools = await searchTools(
-      summary.query,
-      mergeTools(raphgptTools(toolData), agenticTools),
-      LLM_TOOLS_LIMIT,
+    const tools = mergeTools(
+      await searchTools(
+        summary.query,
+        mergeTools(raphgptTools(toolData), agenticTools),
+        LLM_TOOLS_LIMIT,
+      ),
+      telegramTools(ctx),
     );
 
     const { textStream, response } = streamText({
@@ -522,16 +523,12 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       }),
       messages,
       maxSteps: 5,
-      async onChunk(chunk) {
-        logger.debug(inspect(chunk));
-      },
       async onFinish(result) {
-        activeRequests.delete(userId);
-
         // Remove all pending requests
         await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);
+        ctx.session.task = null;
 
-        logger.debug(result.finishReason);
+        logger.debug(`Model finished with ${result.finishReason}`);
 
         if (result.finishReason === "tool-calls") {
           logger.info(
@@ -577,9 +574,9 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       },
       async onError({ error }) {
         logger.error(error, "Encountered error during AI streaming");
-        activeRequests.delete(userId);
+        ctx.session.task?.abort();
       },
-      abortSignal: controller.signal,
+      abortSignal: ctx.session.task.signal,
     });
 
     let textBuffer = "";
@@ -607,8 +604,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
 
     for await (const textPart of textStream) {
       textBuffer += textPart;
-
-      logger.debug(`Text so far: ${textBuffer}`);
 
       if (
         textBuffer.trim().endsWith("<|message|>") ||
@@ -682,8 +677,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         logger.error({ e }, "Error generating or sending voice message");
       }
     }
-
-    ctx.session.chatAction?.stop();
 
     // if (!userIsOwner) {
     //   if (userExceedsFreeMessages) {
