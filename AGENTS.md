@@ -17,3 +17,12 @@ If required, or you are unsure about how to use a library, stop all execution an
 After modifying files in telegram-bot please run bun check (inside the telegram-bot folder) and ensure the output tells you no errors.
 
 If there are still errors after running bun check from the telegram-bot folder, resolve them.
+
+## Guidelines for writing tools
+
+All tools provided to the model are stored under the telegram-bot/tools directory. When errors occur, try not to throw them but instead,
+return early with the error message, telling the model to correct its own tool call. This way, errors don't just stop execution of the
+task completely, but allow the model to have some time to prompt the user, asking for better input or more information.
+
+All tools provided to the model undergo semantic search before being passed to the model. See reference implementation under
+utils/tools.ts.

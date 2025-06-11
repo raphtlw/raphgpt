@@ -1,6 +1,6 @@
 import { openai } from "@ai-sdk/openai";
 import * as Bonfida from "@bonfida/spl-name-service";
-import { b, fmt, i } from "@grammyjs/parse-mode";
+import { fmt } from "@grammyjs/parse-mode";
 import {
   clusterApiUrl,
   Connection,
@@ -14,7 +14,7 @@ import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import { inspect } from "bun";
 import { kv } from "connections/redis";
-import { runModel } from "connections/replicate";
+import { replicate } from "connections/replicate";
 import { format } from "date-fns";
 import { db, tables } from "db";
 import { eq, or } from "drizzle-orm";
@@ -212,156 +212,243 @@ export function raphgptTools(data: ToolData) {
     }),
 
     generate_image: tool({
-      description: "Generate image using Ideogram AI v3 quality model",
+      description:
+        "Generate an image using a model available on Replicate.ai." +
+        "Be very detailed in your prompt, as much as possible.",
       parameters: z.object({
         prompt: z.string().describe("Text prompt for image generation"),
+        model: z
+          .string()
+          .optional()
+          .describe(
+            "Optional model to use, e.g. ideogram-ai/ideogram-v3-quality. If omitted, the agent should search public models.",
+          ),
         aspect_ratio: z
           .string()
-          .describe(
-            "Aspect ratio. Ignored if a resolution or inpainting image is given.",
-          )
-          .optional(),
-        resolution: z
-          .string()
-          .describe(
-            "Resolution. Overrides aspect ratio. Ignored if an inpainting image is given.",
-          )
-          .optional(),
-        magic_prompt_option: z
-          .string()
-          .describe(
-            "Magic Prompt will interpret your prompt and optimize it to maximize variety and quality of the images generated. You can also use it to write prompts in different languages.",
-          )
-          .optional(),
-        image: z
-          .string()
-          .describe(
-            "An image file to use for inpainting. You must also use a mask.",
-          )
-          .optional(),
-        mask: z
-          .string()
-          .describe(
-            "A black and white image. Black pixels are inpainted, white pixels are preserved. The mask will be resized to match the image size.",
-          )
-          .optional(),
-        style_type: z
-          .string()
-          .describe(
-            "The styles help define the specific aesthetic of the image you want to generate.",
-          )
-          .optional(),
-        style_reference_images: z
-          .array(z.string())
-          .describe("A list of images to use as style references.")
-          .optional(),
-        seed: z
-          .number()
-          .int()
-          .describe("Random seed. Set for reproducible generation.")
-          .optional(),
+          .optional()
+          .describe("Optional aspect ratio for the image, e.g. '4:3', '16:9'."),
       }),
-      async execute({
-        prompt,
-        aspect_ratio,
-        resolution,
-        magic_prompt_option,
-        image,
-        mask,
-        style_type,
-        style_reference_images,
-        seed,
-      }) {
-        logger.info(
-          {
-            prompt,
-            aspect_ratio,
-            resolution,
-            magic_prompt_option,
-            image,
-            mask,
-            style_type,
-            style_reference_images,
-            seed,
-          },
-          "Generating image using Ideogram v3 quality",
-        );
-        const output = await runModel(
-          "ideogram-ai/ideogram-v3-quality",
-          z.object({
-            prompt: z.string().describe("Text prompt for image generation"),
-            aspect_ratio: z
-              .string()
-              .describe(
-                "Aspect ratio. Ignored if a resolution or inpainting image is given.",
-              )
-              .optional(),
-            resolution: z
-              .string()
-              .describe(
-                "Resolution. Overrides aspect ratio. Ignored if an inpainting image is given.",
-              )
-              .optional(),
-            magic_prompt_option: z
-              .string()
-              .describe(
-                "Magic Prompt will interpret your prompt and optimize it to maximize variety and quality of the images generated. You can also use it to write prompts in different languages.",
-              )
-              .optional(),
-            image: z
-              .string()
-              .describe(
-                "An image file to use for inpainting. You must also use a mask.",
-              )
-              .optional(),
-            mask: z
-              .string()
-              .describe(
-                "A black and white image. Black pixels are inpainted, white pixels are preserved. The mask will be resized to match the image size.",
-              )
-              .optional(),
-            style_type: z
-              .string()
-              .describe(
-                "The styles help define the specific aesthetic of the image you want to generate.",
-              )
-              .optional(),
-            style_reference_images: z
-              .array(z.string())
-              .describe("A list of images to use as style references.")
-              .optional(),
-            seed: z
-              .number()
-              .int()
-              .describe("Random seed. Set for reproducible generation.")
-              .optional(),
+      async execute({ prompt, model, aspect_ratio }) {
+        const { text: result, steps } = await generateText({
+          model: openai("o4-mini", {
+            structuredOutputs: false,
+            reasoningEffort: "high",
           }),
-          z.string(),
-          {
-            prompt,
-            aspect_ratio,
-            resolution,
-            magic_prompt_option,
-            image,
-            mask,
-            style_type,
-            style_reference_images,
-            seed,
+          system: `You are an image generation assistant.
+If no model identifier is provided, use the list_replicate_models tool to find a suitable public model.
+If the provided model identifier does not include a version, use the list_replicate_model_versions tool to obtain available versions.
+If the model is an official model, use the list_replicate_model_examples tool
+to view illustrative examples or get_replicate_model_readme tool to read documentation.
+To inspect any version's input schema, use get_replicate_openapi_schema.
+Then use run_replicate_model for versioned models or run_replicate_official_model for official models to execute the model.
+After obtaining the image URL, call send_telegram_image to send the image back to the user via Telegram.
+Return the URL of the generated image.`,
+          messages: [
+            {
+              role: "user",
+              content: `Prompt: ${prompt}${model ? `\nModel: ${model}` : ``}${aspect_ratio ? `\nAspect ratio: ${aspect_ratio}` : ``}`,
+            },
+          ],
+          tools: {
+            list_replicate_models: tool({
+              description:
+                "List public models available on Replicate. Returns an array of model identifiers in the form 'owner/model'.",
+              parameters: z.object({}),
+              async execute() {
+                try {
+                  const page = await replicate.models.list();
+                  return page.results.map((m: any) => m.id);
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            get_replicate_openapi_schema: tool({
+              description:
+                "Get the OpenAPI schema for a Replicate model version. Input must be the model identifier 'owner/model:version'.",
+              parameters: z.object({
+                model: z
+                  .string()
+                  .describe("Model identifier in format owner/model:version"),
+              }),
+              async execute({ model }) {
+                const [ownerModel, version] = model.split(":");
+                if (!ownerModel || !version) {
+                  return "Error: Model identifier must be in the format owner/model:version";
+                }
+                const [owner, modelName] = ownerModel.split("/");
+                if (!owner || !modelName) {
+                  return "Error: Model identifier must be in the format owner/model:version";
+                }
+                try {
+                  const versionData = await replicate.models.versions.get(
+                    owner,
+                    modelName,
+                    version,
+                  );
+                  return versionData.openapi_schema;
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            list_replicate_model_versions: tool({
+              description:
+                "List all versions for a Replicate model. Input must be the model identifier 'owner/model'.",
+              parameters: z.object({
+                model: z
+                  .string()
+                  .describe("Model identifier in format owner/model"),
+              }),
+              async execute({ model }) {
+                const [owner, modelName] = model.split("/");
+                if (!owner || !modelName) {
+                  return "Error: Model identifier must be in the format owner/model";
+                }
+                try {
+                  const versions = await replicate.models.versions.list(
+                    owner,
+                    modelName,
+                  );
+                  return versions.map((v: any) => v.id);
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            run_replicate_model: tool({
+              description:
+                "Run a Replicate model with the given input object. Returns the raw prediction output.",
+              parameters: z.object({
+                model: z
+                  .string()
+                  .describe("Model identifier in format owner/model:version"),
+                input: z.any().describe("Input object matching model schema"),
+              }),
+              async execute({ model, input }) {
+                try {
+                  const output = await replicate.run(
+                    model as
+                      | `${string}/${string}`
+                      | `${string}/${string}:${string}`,
+                    { input },
+                  );
+                  return output;
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            list_replicate_model_examples: tool({
+              description:
+                "List example predictions made using an official Replicate model. Input must be the model identifier 'owner/model'. Returns a pagination object containing result predictions.",
+              parameters: z.object({
+                model: z
+                  .string()
+                  .describe("Model identifier in format owner/model"),
+              }),
+              async execute({ model }) {
+                const [owner, modelName] = model.split("/");
+                if (!owner || !modelName) {
+                  return "Error: Model identifier must be in the format owner/model";
+                }
+                try {
+                  const res = await replicate.request(
+                    `/v1/models/${owner}/${modelName}/examples`,
+                    { method: "GET" },
+                  );
+                  if (!res.ok) {
+                    const body = await res.text();
+                    return `Error: Failed to list examples: ${res.status} ${body}`;
+                  }
+                  return await res.json();
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            get_replicate_model_readme: tool({
+              description:
+                "Get the README for a Replicate model. Input must be the model identifier 'owner/model'. Returns the README in Markdown.",
+              parameters: z.object({
+                model: z
+                  .string()
+                  .describe("Model identifier in format owner/model"),
+              }),
+              async execute({ model }) {
+                const [owner, modelName] = model.split("/");
+                if (!owner || !modelName) {
+                  return "Error: Model identifier must be in the format owner/model";
+                }
+                try {
+                  const res = await replicate.request(
+                    `/v1/models/${owner}/${modelName}/readme`,
+                    { method: "GET" },
+                  );
+                  if (!res.ok) {
+                    const body = await res.text();
+                    return `Error: Failed to fetch README: ${res.status} ${body}`;
+                  }
+                  return await res.text();
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            run_replicate_official_model: tool({
+              description:
+                "Run an official Replicate model (no version) with the given input object. Returns the raw prediction output.",
+              parameters: z.object({
+                model: z
+                  .string()
+                  .describe("Model identifier in format owner/model"),
+                input: z.any().describe("Input object matching model schema"),
+              }),
+              async execute({ model, input }) {
+                const [owner, modelName] = model.split("/");
+                if (!owner || !modelName) {
+                  return "Error: Model identifier must be in the format owner/model";
+                }
+                try {
+                  const prediction = await replicate.predictions.create({
+                    model: `${owner}/${modelName}`,
+                    input,
+                    wait: true,
+                  });
+                  return prediction;
+                } catch (err: any) {
+                  return `Error: ${err.message}`;
+                }
+              },
+            }),
+            send_telegram_image: tool({
+              description:
+                "Send an image to the user via Telegram. Inputs: url (image URL) and optional caption.",
+              parameters: z.object({
+                url: z.string().describe("URL of the image to send"),
+                caption: z
+                  .string()
+                  .optional()
+                  .describe("Optional caption for the image"),
+              }),
+              async execute({ url, caption }) {
+                await telegram.sendPhoto(data.chatId, url, {
+                  caption,
+                  reply_parameters: {
+                    message_id: data.msgId,
+                    allow_sending_without_reply: true,
+                  },
+                });
+                return "Image sent.";
+              },
+            }),
           },
-        );
-
-        const caption = fmt`${b}Prompt${b}: ${i}${prompt}${i}`;
-
-        await telegram.sendPhoto(data.chatId, output, {
-          caption: caption.text,
-          caption_entities: caption.entities,
-          reply_parameters: {
-            message_id: data.msgId,
-            allow_sending_without_reply: true,
-          },
+          maxSteps: 5,
         });
 
-        return output;
+        logger.debug(`Generate image agent steps: ${inspect(steps)}`);
+
+        return result;
       },
     }),
 
