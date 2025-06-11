@@ -9,15 +9,11 @@ import {
 } from "@solana/web3.js";
 import { generateText, tool } from "ai";
 import { browser } from "bot/browser";
-import { activeRequests } from "bot/handler";
 import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import { inspect } from "bun";
-import { kv } from "connections/redis";
 import { replicate } from "connections/replicate";
 import { format } from "date-fns";
-import { db, tables } from "db";
-import { eq, or } from "drizzle-orm";
 import { encoding_for_model } from "tiktoken";
 import { getEnv } from "utils/env";
 import { convertHtmlToMarkdown } from "utils/markdown";
@@ -33,9 +29,8 @@ export type ToolData = {
 /**
  * A set of default functions belonging to raphGPT, with data.
  *
- * These are the most essential for interacting with Telegram
- * and therefore, have to be as streamlined and useful
- * as possible.
+ * These tools are unique to raphGPT only and undergo RAG
+ * before being included in LLM calls.
  */
 export function raphgptTools(data: ToolData) {
   return {
@@ -101,7 +96,7 @@ export function raphgptTools(data: ToolData) {
             await page.close();
 
             // limit content length to fit context size for model
-            const enc = encoding_for_model("gpt-4o");
+            const enc = encoding_for_model("o4-mini");
             const tok = enc.encode(markdown);
             const lim = tok.slice(0, 256);
             const txt = new TextDecoder().decode(enc.decode(lim));
@@ -140,7 +135,7 @@ export function raphgptTools(data: ToolData) {
         await page.close();
 
         // limit content length to fit context size for model
-        const enc = encoding_for_model("gpt-4o");
+        const enc = encoding_for_model("o4-mini");
         const tok = enc.encode(markdown);
         const lim = tok.slice(0, 4096);
         const txt = new TextDecoder().decode(enc.decode(lim));
@@ -557,7 +552,9 @@ ${url}`;
             structuredOutputs: false,
             reasoningEffort: "high",
           }),
-          system: `You are a Solana blockchain investigator. Current time in UTC: ${format(new Date(), "EEEE, yyyy-MM-dd 'at' HH:mm:ss zzz (XXX)")}. Always use get_sol_signatures before assuming there are no transactions associated with a specific wallet.`,
+          system: `You are a Solana blockchain investigator.
+Current time in UTC: ${format(new Date(), "EEEE, yyyy-MM-dd 'at' HH:mm:ss zzz (XXX)")}.
+Always use get_sol_signatures before assuming there are no transactions associated with a specific wallet.`,
           messages: [
             {
               role: "user",
@@ -673,84 +670,6 @@ ${url}`;
         logger.debug(result);
 
         return `Result: ${result}`;
-      },
-    }),
-
-    send_message: tool({
-      description:
-        "Send a text message to a specified user (by chat ID or by username/first name/last name). Owner only.",
-      parameters: z.object({
-        recipient: z
-          .union([z.number(), z.string()])
-          .describe("Destination chat ID or username/first name/last name"),
-        text: z.string().describe("Message text to send"),
-      }),
-      async execute({ recipient, text }) {
-        const ownerId = getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
-        if (data.userId !== ownerId) {
-          return "ERROR: Only the bot owner may use send_message";
-        }
-        let chatIdToSend: number;
-        if (typeof recipient === "number") {
-          chatIdToSend = recipient;
-        } else {
-          const user = await db.query.users.findFirst({
-            where: or(
-              eq(tables.users.username, recipient),
-              eq(tables.users.firstName, recipient),
-              eq(tables.users.lastName, recipient),
-            ),
-          });
-          if (!user) {
-            return `ERROR: Recipient not found: ${recipient}`;
-          }
-          chatIdToSend = user.chatId;
-        }
-        await telegram.sendMessage(chatIdToSend, text, {
-          reply_parameters: {
-            message_id: data.msgId,
-            allow_sending_without_reply: true,
-          },
-        });
-        return `Message sent to ${chatIdToSend}`;
-      },
-    }),
-
-    /**
-     * Get all users from the database (owner only).
-     * Returns array of objects containing chatId, username, firstName, lastName.
-     */
-    get_all_users: tool({
-      description: "Get all users from the database. Owner only.",
-      parameters: z.object({}),
-      async execute() {
-        const ownerId = getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
-        if (data.userId !== ownerId) {
-          return "ERROR: Only the bot owner may use get_all_users";
-        }
-        const users = await db.query.users.findMany();
-        return users.map((u) => ({
-          chatId: u.chatId,
-          username: u.username,
-          firstName: u.firstName,
-          lastName: u.lastName,
-        }));
-      },
-    }),
-
-    cancel: tool({
-      description: "Interrupt and stop thinking of a response",
-      parameters: z.object({}),
-      async execute() {
-        if (activeRequests.has(data.userId)) {
-          activeRequests.get(data.userId)?.abort();
-          activeRequests.delete(data.userId);
-        }
-
-        // Remove all pending requests
-        await kv.DEL(`pending_requests:${data.chatId}:${data.userId}`);
-
-        return "Stopped generating response.";
       },
     }),
   };

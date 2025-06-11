@@ -1,7 +1,9 @@
 import { b, fmt, i } from "@grammyjs/parse-mode";
+import type { LanguageModelUsage } from "ai";
 import type { BotContext } from "bot";
+import logger from "bot/logger";
 import { db, tables } from "db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getEnv } from "utils/env";
 
 export const retrieveUser = async (ctx: BotContext) => {
@@ -48,4 +50,29 @@ ${i}You can get more tokens from the store (/topup)${i}`;
   if (!user) throw new Error("Unable to retrieve user");
 
   return user;
+};
+
+const deductCredits = async (ctx: BotContext, usage: LanguageModelUsage) => {
+  if (!ctx.from)
+    throw new Error(`Expected ctx.from to be defined. Value: ${ctx.from}`);
+
+  let cost = 0;
+
+  cost += usage.promptTokens * (2.5 / 1_000_000);
+  cost += usage.completionTokens * (10 / 1_000_000);
+
+  // 50% will be taken as fees
+  cost += (cost / 100) * 50;
+
+  cost *= Math.pow(10, 2); // Store value without 2 d.p.
+
+  // Subtract credits from user
+  await db
+    .update(tables.users)
+    .set({
+      credits: sql`${tables.users.credits} - ${cost}`,
+    })
+    .where(eq(tables.users.userId, ctx.from.id));
+
+  logger.debug({ cost }, "Deducted credits");
 };

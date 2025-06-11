@@ -427,10 +427,6 @@ commands.command("personality", "View/Modify personality", async (ctx) => {
     });
   }
 });
-// .addToScope({
-//   type: "chat",
-//   chat_id: getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()),
-// });
 
 const personalityMenu = async (ctx: BotContext, page: number) => {
   const personality = await db.query.personality.findMany({

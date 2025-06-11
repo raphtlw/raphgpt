@@ -20,12 +20,14 @@ import {
   type Context,
   type SessionFlavor,
 } from "grammy";
+import fs from "node:fs/promises";
 import { getEnv } from "utils/env";
 
 export type SessionData = {
   topupAmountDollars: number | null;
   pendingPaymentInvoicePayload: string | null;
   chatAction: ChatAction | null;
+  tempFiles: string[];
 };
 
 export type BotContext = SessionFlavor<SessionData> &
@@ -38,7 +40,9 @@ export const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
 
 bot.use(
   session({
-    initial: () => ({}),
+    initial: () => ({
+      tempFiles: [] as string[],
+    }),
   }),
 );
 bot.use(commands());
@@ -91,6 +95,23 @@ bot.filter(commandNotFound(botCommands)).use(async (ctx) => {
 });
 
 bot.use(handler);
+
+bot.use(async (ctx, next) => {
+  try {
+    await next();
+  } finally {
+    if (ctx.session.tempFiles?.length) {
+      for (const filePath of ctx.session.tempFiles) {
+        try {
+          await fs.rm(filePath, { force: true });
+        } catch (e) {
+          logger.error({ e, filePath }, "Error cleaning up temporary file");
+        }
+      }
+      ctx.session.tempFiles = [];
+    }
+  }
+});
 
 bot.use(async (ctx, next) => {
   const before = Date.now();

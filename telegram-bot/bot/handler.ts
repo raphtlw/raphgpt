@@ -8,7 +8,6 @@ import {
   type CoreMessage,
   type DataContent,
   type ImagePart,
-  type LanguageModelUsage,
   type UserContent,
 } from "ai";
 import type { BotContext } from "bot";
@@ -24,11 +23,10 @@ import { kv } from "connections/redis";
 import { runModel } from "connections/replicate";
 import { vectorStore } from "connections/vector";
 import { analyzeVideo } from "connections/video-parser";
-import { db, tables } from "db";
+import { db } from "db";
 import { searchChatMemory } from "db/vector";
-import { eq, sql } from "drizzle-orm";
-import fs from "fs";
 import { Composer, InputFile } from "grammy";
+import fs from "node:fs/promises";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
@@ -45,31 +43,6 @@ import { z } from "zod";
 export const handler = new Composer<BotContext>();
 
 export const activeRequests = new Map<number, AbortController>();
-
-const deductCredits = async (ctx: BotContext, usage: LanguageModelUsage) => {
-  if (!ctx.from)
-    throw new Error(`Expected ctx.from to be defined. Value: ${ctx.from}`);
-
-  let cost = 0;
-
-  cost += usage.promptTokens * (2.5 / 1_000_000);
-  cost += usage.completionTokens * (10 / 1_000_000);
-
-  // 50% will be taken as fees
-  cost += (cost / 100) * 50;
-
-  cost *= Math.pow(10, 2); // Store value without 2 d.p.
-
-  // Subtract credits from user
-  await db
-    .update(tables.users)
-    .set({
-      credits: sql`${tables.users.credits} - ${cost}`,
-    })
-    .where(eq(tables.users.userId, ctx.from.id));
-
-  logger.debug({ cost }, "Deducted credits");
-};
 
 handler.on(["message", "edit:text"]).filter(
   async (ctx) => {
@@ -144,8 +117,10 @@ handler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
 
       const file = await downloadFile(ctx);
+      ctx.session.tempFiles.push(file.localPath);
       const inputFileId = createId();
       const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+      ctx.session.tempFiles.push(audioFilePath);
       await $`ffmpeg -i ${file.localPath} ${audioFilePath}`;
 
       const transcript = await runModel(
@@ -175,6 +150,7 @@ handler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
+      ctx.session.tempFiles.push(file.localPath);
 
       const { transcript, frames, summary } = await analyzeVideo(
         Bun.file(file.localPath),
@@ -198,6 +174,7 @@ handler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
+      ctx.session.tempFiles.push(file.localPath);
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
         .toBuffer();
@@ -211,6 +188,7 @@ handler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
+      ctx.session.tempFiles.push(file.localPath);
       if (file.fileType) {
         if (file.fileType.ext === "pdf") {
           toSend.push({
@@ -247,8 +225,9 @@ handler.on(["message", "edit:text"]).filter(
           );
 
           if (!res.ok) {
-            const txt = await res.text();
-            throw new Error(`Video parser failed ${res.status}: ${txt}`);
+            throw new Error(
+              `Gotenberg failed with status ${res.status}: ${await res.text()}`,
+            );
           }
 
           const pdfPages = await pdf2pic
@@ -270,7 +249,7 @@ handler.on(["message", "edit:text"]).filter(
             });
           }
         }
-        if (file.fileType.ext === "jpg") {
+        if (["jpg", "jpeg", "png", "webp"].includes(file.fileType.ext)) {
           toSend.push({
             type: "image",
             image: file.remoteUrl,
@@ -278,7 +257,7 @@ handler.on(["message", "edit:text"]).filter(
         }
         // if (file.fileType.ext === "zip") {
         //   // unzip the file
-        //   const contentDir = await fs.promises.mkdtemp(
+        //   const contentDir = await fs.mkdtemp(
         //     path.join(LOCAL_FILES_DIR, "zip-"),
         //   );
 
@@ -372,12 +351,14 @@ handler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
+      ctx.session.tempFiles.push(file.localPath);
 
       let images: DataContent[];
       if (ctx.msg.sticker.is_animated) {
         const mp4FilePath = await new TGS(file.localPath).convertToMp4(
           path.join(TEMP_DIR, `${createId()}.mp4`),
         );
+        ctx.session.tempFiles.push(mp4FilePath);
         const { transcript, frames, summary } = await analyzeVideo(
           Bun.file(mp4FilePath),
           "en",
@@ -385,6 +366,7 @@ handler.on(["message", "edit:text"]).filter(
         images = frames;
       } else if (file.fileType?.mime.startsWith("video")) {
         const stickerPath = path.join(TEMP_DIR, `sticker_${createId()}.mp4`);
+        ctx.session.tempFiles.push(stickerPath);
         await $`ffmpeg -i ${file.localPath} ${stickerPath}`;
         const { transcript, frames, summary } = await analyzeVideo(
           Bun.file(stickerPath),
@@ -683,10 +665,10 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           ttsInput,
         );
 
-        await fs.promises.mkdir(TEMP_DIR, { recursive: true });
+        await fs.mkdir(TEMP_DIR, { recursive: true });
         const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
         const arrayBuffer = await (await fetch(audioUrl)).arrayBuffer();
-        await fs.promises.writeFile(rawPath, Buffer.from(arrayBuffer));
+        await fs.writeFile(rawPath, Buffer.from(arrayBuffer));
         const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
         await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
 
@@ -694,8 +676,8 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           reply_to_message_id: ctx.msgId,
         });
 
-        await fs.promises.rm(rawPath, { force: true });
-        await fs.promises.rm(oggPath, { force: true });
+        await fs.rm(rawPath, { force: true });
+        await fs.rm(oggPath, { force: true });
       } catch (e) {
         logger.error({ e }, "Error generating or sending voice message");
       }

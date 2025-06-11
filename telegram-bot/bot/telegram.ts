@@ -1,5 +1,4 @@
 import { createId } from "@paralleldrive/cuid2";
-import assert from "assert";
 import { TEMP_DIR } from "bot/constants";
 import logger from "bot/logger";
 import { fileTypeFromBuffer, type FileTypeResult } from "file-type";
@@ -21,7 +20,6 @@ export const downloadFile = async (
 }> => {
   if (ctx.has(":file")) {
     const telegramFile = await ctx.getFile();
-    logger.debug(telegramFile);
 
     // Construct file URL
     const fileUrl = `${getEnv("TELEGRAM_API_URL")}/file/bot${getEnv(
@@ -56,5 +54,5 @@ export const downloadFile = async (
     };
   }
 
-  assert(false, "ERROR: downloadFile called on context with missing file");
+  throw new Error("downloadFile called on context with no file");
 };
