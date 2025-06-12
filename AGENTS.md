@@ -14,9 +14,11 @@ If you need to install a dependency, stop executing and ask the user to do it in
 
 If required, or you are unsure about how to use a library, stop all execution and ask the user to provide documentation via gitingest in the current session.
 
-After modifying files in telegram-bot please run bun check (inside the telegram-bot folder) and ensure the output tells you no errors.
+After modifying files in telegram-bot please run `cd telegram-bot && bun check` and ensure the output tells you no errors.
 
 If there are still errors after running bun check from the telegram-bot folder, resolve them.
+
+Before you stop execution, make sure to run `cd telegram-bot && bun format` (only if bun check returns no errors).
 
 ## Guidelines for writing tools
 

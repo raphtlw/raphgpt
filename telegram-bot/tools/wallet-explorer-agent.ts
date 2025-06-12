@@ -1,11 +1,15 @@
-import { createAgent } from "bot/agents";
-import { tool } from "ai";
-import { openai } from "@ai-sdk/openai";
 import * as Bonfida from "@bonfida/spl-name-service";
-import { clusterApiUrl, Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import {
+  clusterApiUrl,
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+} from "@solana/web3.js";
+import { tool } from "ai";
+import { createAgent } from "bot/agents";
 import logger from "bot/logger";
-import { format } from "date-fns";
 import { inspect } from "bun";
+import { format } from "date-fns";
 import { z } from "zod";
 
 /**

@@ -10,13 +10,16 @@ import { z } from "zod";
  */
 export const generateImage = createAgent({
   name: "generate_image_agent",
-  description: "Generate images via the official 'google/imagen-4' model on Replicate and send results to Telegram.",
+  description:
+    "Generate images via the official 'google/imagen-4' model on Replicate and send results to Telegram.",
   parameters: z.object({
     prompt: z.string().describe("Text prompt for image generation"),
     model: z
       .string()
       .optional()
-      .describe("Optional model identifier, e.g. 'google/imagen-4' or with ':version'."),
+      .describe(
+        "Optional model identifier, e.g. 'google/imagen-4' or with ':version'.",
+      ),
     aspect_ratio: z
       .string()
       .optional()
@@ -55,7 +58,9 @@ Return only valid tool calls in JSON, no extra text.
 
     models_search: tool({
       description: "Search public models by a query string.",
-      parameters: z.object({ query: z.string().describe("Search term for models") }),
+      parameters: z.object({
+        query: z.string().describe("Search term for models"),
+      }),
       async execute({ query }) {
         try {
           const res = await replicate.models.search(query);
@@ -67,19 +72,25 @@ Return only valid tool calls in JSON, no extra text.
     }),
 
     list_model_versions: tool({
-      description: "List version IDs for a given model identifier 'owner/model'.",
-      parameters: z.object({ model: z.string().describe("Model identifier 'owner/model'") }),
+      description:
+        "List version IDs for a given model identifier 'owner/model'.",
+      parameters: z.object({
+        model: z.string().describe("Model identifier 'owner/model'"),
+      }),
       async execute(params: any) {
         try {
           const modelId = params.model;
           if (!modelId) {
             return "Error: missing model identifier";
           }
-          const [owner, name] = (modelId as string).split('/');
+          const [owner, name] = (modelId as string).split("/");
           if (!owner || !name) {
             return "Error: invalid model identifier";
           }
-          const raw = (await replicate.models.versions.list(owner, name)) as any;
+          const raw = (await replicate.models.versions.list(
+            owner,
+            name,
+          )) as any;
           const entries = Array.isArray(raw) ? raw : raw.results;
           return entries.map((v: any) => v.id);
         } catch (err: any) {
@@ -89,14 +100,23 @@ Return only valid tool calls in JSON, no extra text.
     }),
 
     create_prediction: tool({
-      description: "Create a Replicate prediction; returns the prediction object.",
+      description:
+        "Create a Replicate prediction; returns the prediction object.",
       parameters: z.object({
-        version: z.string().describe("Full model version ID or 'owner/model:version'"),
-        input: z.any().describe("Input object for the prediction, matching version schema"),
+        version: z
+          .string()
+          .describe("Full model version ID or 'owner/model:version'"),
+        input: z
+          .any()
+          .describe("Input object for the prediction, matching version schema"),
       }),
       async execute({ version, input }) {
         try {
-          const pred = await replicate.predictions.create({ version, input, wait: true });
+          const pred = await replicate.predictions.create({
+            version,
+            input,
+            wait: true,
+          });
           return pred;
         } catch (err: any) {
           return `Error: ${err.message}`;
@@ -106,7 +126,9 @@ Return only valid tool calls in JSON, no extra text.
 
     get_prediction: tool({
       description: "Get the status/output of an existing prediction by ID.",
-      parameters: z.object({ id: z.string().describe("Prediction ID to poll") }),
+      parameters: z.object({
+        id: z.string().describe("Prediction ID to poll"),
+      }),
       async execute({ id }) {
         try {
           return await replicate.predictions.get(id);
@@ -118,7 +140,9 @@ Return only valid tool calls in JSON, no extra text.
 
     send_telegram_image: tool({
       description: "Send the generated image URL to the user via Telegram.",
-      parameters: z.object({ url: z.string().describe("HTTPS URL of the image to send") }),
+      parameters: z.object({
+        url: z.string().describe("HTTPS URL of the image to send"),
+      }),
       async execute({ url }) {
         await telegram.sendPhoto(toolData.ctx.chatId!, url, {
           reply_parameters: {
@@ -126,7 +150,7 @@ Return only valid tool calls in JSON, no extra text.
             allow_sending_without_reply: true,
           },
         });
-        return 'ok';
+        return "ok";
       },
     }),
   }),

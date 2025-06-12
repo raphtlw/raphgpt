@@ -4,9 +4,9 @@ import { browser } from "bot/browser";
 import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
+import { encoding_for_model } from "tiktoken";
 import { getEnv } from "utils/env";
 import { convertHtmlToMarkdown } from "utils/markdown";
-import { encoding_for_model } from "tiktoken";
 import { z } from "zod";
 
 /**
@@ -189,7 +189,6 @@ export function raphgptTools(data: ToolData) {
       },
     }),
 
-
     publish_mdx: tool({
       description: "Publish a webpage with MDX content",
       parameters: z.object({
@@ -246,6 +245,5 @@ ${url}`;
         return url;
       },
     }),
-
   };
 }

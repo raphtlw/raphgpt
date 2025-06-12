@@ -1,9 +1,9 @@
-import { createAgent } from "bot/agents";
-import { tool } from "ai";
 import { pipeline } from "@huggingface/transformers";
+import { tool } from "ai";
+import { createAgent } from "bot/agents";
+import logger from "bot/logger";
 import similarity from "utils/cosine-similarity";
 import { getEnv } from "utils/env";
-import logger from "bot/logger";
 import { z } from "zod";
 
 /**
@@ -108,10 +108,9 @@ Always return only a valid tool call in JSON format without any additional text 
         while (true) {
           const params = new URLSearchParams();
           if (skip) params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/BusStops${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusStops${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
@@ -257,10 +256,9 @@ Always return only a valid tool call in JSON format without any additional text 
         while (true) {
           const params = new URLSearchParams();
           params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/BusServices${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusServices${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
@@ -299,14 +297,15 @@ Always return only a valid tool call in JSON format without any additional text 
         while (true) {
           const params = new URLSearchParams();
           params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/BusRoutes${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusRoutes${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
-            throw new Error(`Failed to fetch bus routes: ${resp.status} ${txt}`);
+            throw new Error(
+              `Failed to fetch bus routes: ${resp.status} ${txt}`,
+            );
           }
           const body = await resp.json();
           logger.debug(body, `LTA bus data from get_bus_routes skip=${skip}`);
@@ -348,10 +347,9 @@ Always return only a valid tool call in JSON format without any additional text 
           const params = new URLSearchParams();
           if (date) params.append("Date", date);
           params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/PV/Bus${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/PV/Bus${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
@@ -398,10 +396,9 @@ Always return only a valid tool call in JSON format without any additional text 
           const params = new URLSearchParams();
           if (date) params.append("Date", date);
           params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/PV/ODBus${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/PV/ODBus${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
@@ -428,7 +425,9 @@ Always return only a valid tool call in JSON format without any additional text 
         date: z
           .string()
           .optional()
-          .describe("YYYYMM for origin-destination train volume data (optional)"),
+          .describe(
+            "YYYYMM for origin-destination train volume data (optional)",
+          ),
         accept: z
           .enum(["application/json", "application/atom+xml"])
           .optional()
@@ -446,14 +445,15 @@ Always return only a valid tool call in JSON format without any additional text 
           const params = new URLSearchParams();
           if (date) params.append("Date", date);
           params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/PV/ODTrain${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/PV/ODTrain${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
-            throw new Error(`Failed to fetch PV/ODTrain: ${resp.status} ${txt}`);
+            throw new Error(
+              `Failed to fetch PV/ODTrain: ${resp.status} ${txt}`,
+            );
           }
           const body = await resp.json();
           const page = Array.isArray(body.value) ? body.value : [];
@@ -494,10 +494,9 @@ Always return only a valid tool call in JSON format without any additional text 
           const params = new URLSearchParams();
           if (date) params.append("Date", date);
           params.append("$skip", skip.toString());
-          const url =
-            `https://datamall2.mytransport.sg/ltaodataservice/PV/Train${
-              params.toString() ? `?${params}` : ""
-            }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/PV/Train${
+            params.toString() ? `?${params}` : ""
+          }`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
