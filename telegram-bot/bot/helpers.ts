@@ -1,10 +1,9 @@
-import { b, fmt, i } from "@grammyjs/parse-mode";
+import { b, fmt } from "@grammyjs/parse-mode";
 import type { LanguageModelUsage } from "ai";
 import type { BotContext } from "bot";
 import logger from "bot/logger";
 import { db, tables } from "db";
 import { eq, sql } from "drizzle-orm";
-import { getEnv } from "utils/env";
 
 export const retrieveUser = async (ctx: BotContext) => {
   if (!ctx.from)
@@ -26,11 +25,12 @@ export const retrieveUser = async (ctx: BotContext) => {
       })
       .returning()
       .get();
-    const welcomeNotification = fmt`${b}Welcome to raphGPT.${b}
-You get ${b}${getEnv(
-      "FREE_TIER_MESSAGE_DAILY_THRESHOLD",
-    )}${b} messages per day, resets at 00:00 daily.
-${i}You can get more tokens from the store (/topup)${i}`;
+    const welcomeNotification = fmt`${b}Welcome to raphGPT.${b}`;
+    //     const welcomeNotification = fmt`${b}Welcome to raphGPT.${b}
+    // You get ${b}${getEnv(
+    //       "FREE_TIER_MESSAGE_DAILY_THRESHOLD",
+    //     )}${b} messages per day, resets at 00:00 daily.
+    // ${i}You can get more tokens from the store (/topup)${i}`;
     await ctx.reply(welcomeNotification.text, {
       entities: welcomeNotification.entities,
     });
