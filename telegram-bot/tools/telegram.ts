@@ -1,7 +1,7 @@
 import { tool, type ToolSet } from "ai";
 import { type BotContext } from "bot";
 import { telegram } from "bot/telegram";
-import { kv } from "connections/redis";
+import { redis } from "connections/redis";
 import { db, tables } from "db";
 import { eq, or } from "drizzle-orm";
 import { getEnv } from "utils/env";
@@ -83,7 +83,7 @@ export function telegramTools(ctx: BotContext): ToolSet {
       async execute() {
         ctx.session.task?.abort();
 
-        await kv.DEL(`pending_requests:${ctx.chatId}:${ctx.from?.id}`);
+        await redis.del(`pending_requests:${ctx.chatId}:${ctx.from?.id}`);
 
         return "Stopped generating response.";
       },

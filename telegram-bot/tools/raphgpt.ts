@@ -11,20 +11,13 @@ import { generateText, tool } from "ai";
 import { browser } from "bot/browser";
 import logger from "bot/logger";
 import { telegram } from "bot/telegram";
+import type { ToolData } from "bot/tool-data";
 import { inspect } from "bun";
-import { replicate } from "connections/replicate";
 import { format } from "date-fns";
 import { encoding_for_model } from "tiktoken";
 import { getEnv } from "utils/env";
 import { convertHtmlToMarkdown } from "utils/markdown";
 import { z } from "zod";
-
-export type ToolData = {
-  userId: number;
-  chatId: number;
-  msgId: number;
-  dbUser: number;
-};
 
 /**
  * A set of default functions belonging to raphGPT, with data.
@@ -522,247 +515,6 @@ export function raphgptTools(data: ToolData) {
       },
     }),
 
-    generate_image: tool({
-      description:
-        "Generate an image using a model available on Replicate.ai." +
-        "Be very detailed in your prompt, as much as possible.",
-      parameters: z.object({
-        prompt: z.string().describe("Text prompt for image generation"),
-        model: z
-          .string()
-          .optional()
-          .describe(
-            "Optional model to use, e.g. ideogram-ai/ideogram-v3-quality. If omitted, the agent should search public models.",
-          ),
-        aspect_ratio: z
-          .string()
-          .optional()
-          .describe("Optional aspect ratio for the image, e.g. '4:3', '16:9'."),
-      }),
-      async execute({ prompt, model, aspect_ratio }) {
-        const { text: result, steps } = await generateText({
-          model: openai("o4-mini", {
-            structuredOutputs: false,
-            reasoningEffort: "high",
-          }),
-          system: `You are an image generation assistant.
-If no model identifier is provided, use the list_replicate_models tool to find a suitable public model.
-If the provided model identifier does not include a version, use the list_replicate_model_versions tool to obtain available versions.
-If the model is an official model, use the list_replicate_model_examples tool
-to view illustrative examples or get_replicate_model_readme tool to read documentation.
-To inspect any version's input schema, use get_replicate_openapi_schema.
-Then use run_replicate_model for versioned models or run_replicate_official_model for official models to execute the model.
-After obtaining the image URL, call send_telegram_image to send the image back to the user via Telegram.
-Return the URL of the generated image.`,
-          messages: [
-            {
-              role: "user",
-              content: `Prompt: ${prompt}${model ? `\nModel: ${model}` : ``}${aspect_ratio ? `\nAspect ratio: ${aspect_ratio}` : ``}`,
-            },
-          ],
-          tools: {
-            list_replicate_models: tool({
-              description:
-                "List public models available on Replicate. Returns an array of model identifiers in the form 'owner/model'.",
-              parameters: z.object({}),
-              async execute() {
-                try {
-                  const page = await replicate.models.list();
-                  return page.results.map((m: any) => m.id);
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            get_replicate_openapi_schema: tool({
-              description:
-                "Get the OpenAPI schema for a Replicate model version. Input must be the model identifier 'owner/model:version'.",
-              parameters: z.object({
-                model: z
-                  .string()
-                  .describe("Model identifier in format owner/model:version"),
-              }),
-              async execute({ model }) {
-                const [ownerModel, version] = model.split(":");
-                if (!ownerModel || !version) {
-                  return "Error: Model identifier must be in the format owner/model:version";
-                }
-                const [owner, modelName] = ownerModel.split("/");
-                if (!owner || !modelName) {
-                  return "Error: Model identifier must be in the format owner/model:version";
-                }
-                try {
-                  const versionData = await replicate.models.versions.get(
-                    owner,
-                    modelName,
-                    version,
-                  );
-                  return versionData.openapi_schema;
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            list_replicate_model_versions: tool({
-              description:
-                "List all versions for a Replicate model. Input must be the model identifier 'owner/model'.",
-              parameters: z.object({
-                model: z
-                  .string()
-                  .describe("Model identifier in format owner/model"),
-              }),
-              async execute({ model }) {
-                const [owner, modelName] = model.split("/");
-                if (!owner || !modelName) {
-                  return "Error: Model identifier must be in the format owner/model";
-                }
-                try {
-                  const versions = await replicate.models.versions.list(
-                    owner,
-                    modelName,
-                  );
-                  return versions.map((v: any) => v.id);
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            run_replicate_model: tool({
-              description:
-                "Run a Replicate model with the given input object. Returns the raw prediction output.",
-              parameters: z.object({
-                model: z
-                  .string()
-                  .describe("Model identifier in format owner/model:version"),
-                input: z.any().describe("Input object matching model schema"),
-              }),
-              async execute({ model, input }) {
-                try {
-                  const output = await replicate.run(
-                    model as
-                      | `${string}/${string}`
-                      | `${string}/${string}:${string}`,
-                    { input },
-                  );
-                  return output;
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            list_replicate_model_examples: tool({
-              description:
-                "List example predictions made using an official Replicate model. Input must be the model identifier 'owner/model'. Returns a pagination object containing result predictions.",
-              parameters: z.object({
-                model: z
-                  .string()
-                  .describe("Model identifier in format owner/model"),
-              }),
-              async execute({ model }) {
-                const [owner, modelName] = model.split("/");
-                if (!owner || !modelName) {
-                  return "Error: Model identifier must be in the format owner/model";
-                }
-                try {
-                  const res = await replicate.request(
-                    `/v1/models/${owner}/${modelName}/examples`,
-                    { method: "GET" },
-                  );
-                  if (!res.ok) {
-                    const body = await res.text();
-                    return `Error: Failed to list examples: ${res.status} ${body}`;
-                  }
-                  return await res.json();
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            get_replicate_model_readme: tool({
-              description:
-                "Get the README for a Replicate model. Input must be the model identifier 'owner/model'. Returns the README in Markdown.",
-              parameters: z.object({
-                model: z
-                  .string()
-                  .describe("Model identifier in format owner/model"),
-              }),
-              async execute({ model }) {
-                const [owner, modelName] = model.split("/");
-                if (!owner || !modelName) {
-                  return "Error: Model identifier must be in the format owner/model";
-                }
-                try {
-                  const res = await replicate.request(
-                    `/v1/models/${owner}/${modelName}/readme`,
-                    { method: "GET" },
-                  );
-                  if (!res.ok) {
-                    const body = await res.text();
-                    return `Error: Failed to fetch README: ${res.status} ${body}`;
-                  }
-                  return await res.text();
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            run_replicate_official_model: tool({
-              description:
-                "Run an official Replicate model (no version) with the given input object. Returns the raw prediction output.",
-              parameters: z.object({
-                model: z
-                  .string()
-                  .describe("Model identifier in format owner/model"),
-                input: z.any().describe("Input object matching model schema"),
-              }),
-              async execute({ model, input }) {
-                const [owner, modelName] = model.split("/");
-                if (!owner || !modelName) {
-                  return "Error: Model identifier must be in the format owner/model";
-                }
-                try {
-                  const prediction = await replicate.predictions.create({
-                    model: `${owner}/${modelName}`,
-                    input,
-                    wait: true,
-                  });
-                  return prediction;
-                } catch (err: any) {
-                  return `Error: ${err.message}`;
-                }
-              },
-            }),
-            send_telegram_image: tool({
-              description:
-                "Send an image to the user via Telegram. Inputs: url (image URL) and optional caption.",
-              parameters: z.object({
-                url: z.string().describe("URL of the image to send"),
-                caption: z
-                  .string()
-                  .optional()
-                  .describe("Optional caption for the image"),
-              }),
-              async execute({ url, caption }) {
-                await telegram.sendPhoto(data.chatId, url, {
-                  caption,
-                  reply_parameters: {
-                    message_id: data.msgId,
-                    allow_sending_without_reply: true,
-                  },
-                });
-                return "Image sent.";
-              },
-            }),
-          },
-          maxSteps: 5,
-        });
-
-        logger.debug(`Generate image agent steps: ${inspect(steps)}`);
-
-        return result;
-      },
-    }),
-
     publish_mdx: tool({
       description: "Publish a webpage with MDX content",
       parameters: z.object({
@@ -808,10 +560,10 @@ Return the URL of the generated image.`,
         const publishNotification = fmt`I've published a new webpage.
 You can view it at this URL:
 ${url}`;
-        await telegram.sendMessage(data.chatId, publishNotification.text, {
+        await telegram.sendMessage(data.ctx.chatId!, publishNotification.text, {
           entities: publishNotification.entities,
           reply_parameters: {
-            message_id: data.msgId,
+            message_id: data.ctx.msgId!,
             allow_sending_without_reply: true,
           },
         });

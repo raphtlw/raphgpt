@@ -19,7 +19,7 @@ import logger from "bot/logger";
 import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
 import { $, inspect } from "bun";
-import { kv } from "connections/redis";
+import { redis } from "connections/redis";
 import { runModel } from "connections/replicate";
 import { vectorStore } from "connections/vector";
 import { analyzeVideo } from "connections/video-parser";
@@ -30,10 +30,11 @@ import fs from "node:fs/promises";
 import path from "path";
 import pdf2pic from "pdf2pic";
 import sharp from "sharp";
-import superjson from "superjson";
+import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
-import { raphgptTools, type ToolData } from "tools/raphgpt";
+import { generateImage } from "tools/generate-image";
+import { raphgptTools } from "tools/raphgpt";
 import { telegramTools } from "tools/telegram";
 import { getEnv } from "utils/env";
 import { buildPrompt } from "utils/prompt";
@@ -41,9 +42,9 @@ import TGS from "utils/tgs";
 import { mergeTools, searchTools } from "utils/tools";
 import { z } from "zod";
 
-export const handler = new Composer<BotContext>();
+export const messageHandler = new Composer<BotContext>();
 
-handler.on(["message", "edit:text"]).filter(
+messageHandler.on(["message", "edit:text"]).filter(
   async (ctx) => {
     if (!ctx.from) throw new Error("ctx.from not found");
 
@@ -465,9 +466,11 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       content: remindingSystemPrompt.join("\n"),
     });
 
-    const pendingRequests = await kv
+    const pendingRequests = await redis
       .LRANGE(`pending_requests:${ctx.chatId}:${userId}`, 0, -1)
-      .then((jsons) => jsons.map((j) => superjson.parse<UserContent>(j)));
+      .then((jsons) =>
+        jsons.map((c: string) => SuperJSON.parse<UserContent>(c)),
+      );
 
     logger.debug(`Pending requests: ${inspect(pendingRequests)}`);
 
@@ -480,22 +483,15 @@ Title should be what this set of messages would be stored as in the RAG db.`,
 
     logger.debug(`Sending message to model: ${inspect(content)}`);
 
-    const toolData: ToolData = {
-      userId: user.userId!,
-      chatId: ctx.chatId,
-      msgId: ctx.msgId,
-      dbUser: user.id,
-    };
-
-    await kv.RPUSH(
+    await redis.RPUSH(
       `pending_requests:${ctx.chatId}:${userId}`,
-      superjson.stringify(toSend),
+      SuperJSON.stringify(toSend),
     );
 
     const tools = mergeTools(
       await searchTools(
         summary.query,
-        mergeTools(raphgptTools(toolData), agenticTools),
+        mergeTools(raphgptTools({ ctx }), generateImage({ ctx }), agenticTools),
         LLM_TOOLS_LIMIT,
       ),
       telegramTools(ctx),
@@ -525,7 +521,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       maxSteps: 5,
       async onFinish(result) {
         // Remove all pending requests
-        await kv.DEL(`pending_requests:${ctx.chatId}:${userId}`);
+        await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
         ctx.session.task = null;
 
         logger.debug(`Model finished with ${result.finishReason}`);

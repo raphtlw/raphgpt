@@ -1,15 +1,14 @@
 import {
-  commandNotFound,
-  commands,
-  type CommandsFlavor,
-} from "@grammyjs/commands";
-import {
   conversations,
   type ConversationFlavor,
 } from "@grammyjs/conversations";
-import { commands as botCommands } from "bot/commands";
 import { PRODUCTION } from "bot/constants";
-import { handler } from "bot/handler";
+import { configHandler } from "bot/handlers/config";
+import { creditsHandler } from "bot/handlers/credits";
+import { generalHandler } from "bot/handlers/general";
+import { messageHandler } from "bot/handlers/message";
+import { personalityHandler } from "bot/handlers/personality";
+import { requestHandler } from "bot/handlers/request";
 import logger from "bot/logger";
 import { ChatAction } from "bot/running-tasks";
 import {
@@ -32,7 +31,6 @@ export type SessionData = {
 };
 
 export type BotContext = SessionFlavor<SessionData> &
-  CommandsFlavor<Context> &
   ConversationFlavor<Context>;
 
 export const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
@@ -46,7 +44,6 @@ bot.use(
     }),
   }),
 );
-bot.use(commands());
 bot.use(conversations());
 bot.use(async (ctx, next) => {
   logger.debug({ update: ctx.update }, "Update Received");
@@ -75,26 +72,6 @@ if (PRODUCTION) {
   }
 }
 
-bot.use(botCommands);
-
-// Set available bot commands
-await botCommands.setCommands(bot).catch((e) => {
-  logger.error(
-    "Encountered an error setting the bot's commands, but it's okay.",
-  );
-});
-
-// Suggesting the nearest command
-bot.filter(commandNotFound(botCommands)).use(async (ctx) => {
-  if (ctx.commandSuggestion) {
-    await ctx.reply(
-      `Hmm... I don't know that command. Did you mean ${ctx.commandSuggestion}?`,
-    );
-  } else {
-    await ctx.reply("Oops... I don't know that command 😥");
-  }
-});
-
 // Post-handler cleanup
 bot.use(async (ctx, next) => {
   try {
@@ -116,7 +93,13 @@ bot.use(async (ctx, next) => {
   }
 });
 
-bot.use(handler);
+bot.use(configHandler);
+bot.use(creditsHandler);
+bot.use(generalHandler);
+bot.use(requestHandler);
+bot.use(personalityHandler);
+
+bot.use(messageHandler);
 
 bot.use(async (ctx, next) => {
   const before = Date.now();
