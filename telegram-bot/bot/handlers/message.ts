@@ -34,8 +34,10 @@ import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
 import { generateImage } from "tools/generate-image";
+import { ltaAgent } from "tools/lta-agent";
 import { raphgptTools } from "tools/raphgpt";
 import { telegramTools } from "tools/telegram";
+import { walletExplorerAgent } from "tools/wallet-explorer-agent";
 import { getEnv } from "utils/env";
 import { buildPrompt } from "utils/prompt";
 import TGS from "utils/tgs";
@@ -491,7 +493,13 @@ Title should be what this set of messages would be stored as in the RAG db.`,
     const tools = mergeTools(
       await searchTools(
         summary.query,
-        mergeTools(raphgptTools({ ctx }), generateImage({ ctx }), agenticTools),
+        mergeTools(
+          raphgptTools({ ctx }),
+          generateImage({ ctx }),
+          ltaAgent({ ctx }),
+          walletExplorerAgent({ ctx }),
+          agenticTools,
+        ),
         LLM_TOOLS_LIMIT,
       ),
       telegramTools(ctx),

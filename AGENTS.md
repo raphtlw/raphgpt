@@ -25,4 +25,17 @@ return early with the error message, telling the model to correct its own tool c
 task completely, but allow the model to have some time to prompt the user, asking for better input or more information.
 
 All tools provided to the model undergo semantic search before being passed to the model. See reference implementation under
-utils/tools.ts.
+utils/tools.ts
+
+### Agentic tools
+
+The telegram-bot/tools directory not only contains tool sets, but also contain agents. Agents are created using the function createAgent,
+located in telegram-bot/bot/agents.ts
+
+Agents have their own data, and this data is the same as the one passed into any other tool (telegram-bot/bot/tool-data.ts:ToolData)
+
+When creating agentic tools, be as specific as possible, so that LLMs can understand what information they are expected to give them,
+and what the (agentic tools) purpose is as a sub-agent.
+
+When creating agentic tools, in the createTools parameter when defining tools, try to write comments and logger statements.
+Log in debug mode, so that I (the user) can look at the logs to easily debug information.
