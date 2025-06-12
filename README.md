@@ -13,7 +13,14 @@ Prerequisites:
 - [Docker Desktop](https://www.docker.com/)
 - [Bun for VSCode](https://marketplace.visualstudio.com/items?itemName=oven.bun-vscode)
 - [Bun](https://bun.sh/)
-- idk, maybe a good computer to run all the video processing stuff?
+
+## System requirements
+
+| Requirement                 | Details                                                         |
+| --------------------------- | --------------------------------------------------------------- |
+| Operating systems           | macOS 12+, Ubuntu 20.04+/Debian 10+, or Windows 11 **via WSL2** |
+| Bun                         | **v1.2 or newer** (Latest recommended)                          |
+| RAM                         | 2-GB minimum (4-GB recommended)                                 |
 
 To develop effectively with proper autocomplete, you need to install dependencies:
 
