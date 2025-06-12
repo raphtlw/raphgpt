@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/images/botpic.png" alt="Bot profile picture" height="200" style="border-radius: 1000px;" />
+  <img src=".github/images/botpic-transparent.png" alt="Bot profile picture" height="300" />
 </p>
 
 <br />
