@@ -1,1 +1,0 @@
-ALTER TABLE `users` ADD `free_tier_message_count` integer DEFAULT 0 NOT NULL;

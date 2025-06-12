@@ -1,27 +1,37 @@
-# raphGPT
+<p align="center">
+  <img src=".github/images/botpic.png" alt="Bot profile picture" height="200" style="border-radius: 1000px;" />
+</p>
 
-### Useful tools
+<br />
 
-- https://stefanterdell.github.io/json-schema-to-zod-react/
+This is raphGPT, a multi-modal Telegram bot built on top of the OpenAI API as a tool that @raphtlw can use to make tasks and communication move faster.
 
-## Development
+## Develop
 
-Start Docker Containers
+Prerequisites:
 
-```shell
-docker compose up redis gotenberg chromadb
-```
+- [Docker Desktop](https://www.docker.com/)
+- [Bun for VSCode](https://marketplace.visualstudio.com/items?itemName=oven.bun-vscode)
+- [Bun](https://bun.sh/)
+- idk, maybe a good computer to run all the video processing stuff?
 
-Start Python Development Server
-
-```shell
-uv venv
-source .venv/bin/activate.fish
-fastapi dev main.py --port 26691
-```
-
-Start TypeScript Development Server
+To develop effectively with proper autocomplete, you need to install dependencies:
 
 ```shell
-pm dev
+cd telegram-bot
+bun install
 ```
+
+Launch a new terminal in the root of this project and run:
+
+```shell
+docker compose watch
+```
+
+It should start building Dockerfiles in telegram-bot and video-parser.
+
+Auto-refreshes when changes are made.
+
+## Contributing
+
+Make a PR and I will review it.

@@ -1,0 +1,14 @@
+[project]
+name = "video-parser"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[all]>=0.115.12",
+    "ffmpeg-python>=0.2.0",
+    "mediapipe>=0.10.21",
+    "openai>=1.84.0",
+    "opencv-python-headless>=4.11.0.86",
+    "python-multipart>=0.0.20",
+]
