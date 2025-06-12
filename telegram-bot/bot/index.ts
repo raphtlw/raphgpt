@@ -50,24 +50,50 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-// Set bot information
+// ───────────────────────────────────────────────────────────────
+// ⚙️  Register slash commands + about/description with Telegram
+// ───────────────────────────────────────────────────────────────
 if (PRODUCTION) {
   try {
+    await bot.api.setMyCommands([
+      {
+        command: "start",
+        description: "Start the bot & show usage instructions",
+      },
+      { command: "clear", description: "Clear your session history & memory" },
+      {
+        command: "personality",
+        description: "View & edit custom personality prompts",
+      },
+      {
+        command: "set",
+        description: "Set configuration options (API key, model…)",
+      },
+      {
+        command: "config",
+        description: "Show your current configuration settings",
+      },
+      { command: "cancel", description: "Cancel the ongoing request" },
+      { command: "balance", description: "View your AI credits balance" },
+      { command: "topup", description: "Purchase additional credits" },
+    ]);
+
     await bot.api.setMyDescription(
-      "The best AI companion on Telegram! This started as a personal project to create a bot that can do things for me. It can listen to voice messages and watch video messages.",
-      {
-        language_code: "en",
-      },
+      `RaphGPT is an AI‑powered Telegram bot that lets you chat naturally with LLMs via text, voice or video.
+  • Transcribe voice & video, extract key frames & summaries
+  • Customize your bot’s personality prompts
+  • Configure API keys, models & settings on the fly
+  • Track & top‑up AI credits (Stripe & Solana supported)
+  • Clear short‑term memory or long‑term vector history
+  • Built‑in image generation, agents & tool integrations`,
     );
+
     await bot.api.setMyShortDescription(
-      "Powered by OpenAI. Any inquiries @raphtlw",
-      {
-        language_code: "en",
-      },
+      "AI assistant for Telegram: chat, voice & video‑analysis, image gen, google maps & bus timings",
     );
   } catch {
     logger.error(
-      "Encountered an error setting the bot's description, but it's okay.",
+      "Encountered an error setting the bot's about/information, but it's okay.",
     );
   }
 }
