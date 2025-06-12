@@ -117,7 +117,12 @@ export const agentExecute =
     // Save context history in Redis
     logger.debug(response, `Response from ${name} agent`);
     context.push(...response.messages);
-    await redis.set(redisKey, SuperJSON.stringify(context));
+    await redis.set(redisKey, SuperJSON.stringify(context), {
+      expiration: {
+        type: "EX",
+        value: 60,
+      },
+    });
 
     return `Agent responded with: ${text}`;
   };
