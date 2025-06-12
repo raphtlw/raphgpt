@@ -68,5 +68,9 @@
   },
   "patchedDependencies": {
     "openai-zod-to-json-schema@1.0.3": "patches/openai-zod-to-json-schema@1.0.3.patch"
-  }
+  },
+  "trustedDependencies": [
+    "onnxruntime-node",
+    "protobufjs"
+  ]
 }
