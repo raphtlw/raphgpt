@@ -20,15 +20,15 @@ import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
 import { $, inspect } from "bun";
 import { redis } from "connections/redis";
-import { runModel } from "connections/replicate";
+import { replicate } from "connections/replicate";
 import { vectorStore } from "connections/vector";
 import { analyzeVideo } from "connections/video-parser";
 import { db } from "db";
 import { searchChatMemory } from "db/vector";
 import { Composer, InputFile } from "grammy";
-import fs from "node:fs/promises";
 import path from "path";
 import pdf2pic from "pdf2pic";
+import type { FileOutput } from "replicate";
 import sharp from "sharp";
 import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
@@ -114,7 +114,7 @@ messageHandler.on(["message", "edit:text"]).filter(
       toSend.push({ type: "text", text: ctx.msg.text });
     }
     if (ctx.msg.voice) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
+      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
       ctx.session.tempFiles.push(file.localPath);
@@ -123,27 +123,19 @@ messageHandler.on(["message", "edit:text"]).filter(
       ctx.session.tempFiles.push(audioFilePath);
       await $`ffmpeg -i ${file.localPath} ${audioFilePath}`;
 
-      const transcript = await runModel(
+      const transcript = (await replicate.run(
         "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
-        z.object({
-          task: z.string(),
-          audio: z.string(),
-          language: z.string(),
-          batch_size: z.number(),
-          diarise_audio: z.boolean(),
-        }),
-        z.object({
-          text: z.string(),
-        }),
         {
-          task: "transcribe",
-          audio: file.remoteUrl,
-          language: "english",
-          batch_size: 64,
-          diarise_audio: false,
+          input: {
+            task: "transcribe",
+            audio: file.remoteUrl,
+            language: "english",
+            batch_size: 64,
+            diarise_audio: false,
+          },
+          signal: ctx.session.task.signal,
         },
-        ctx.session.task.signal,
-      );
+      )) as { text: string };
 
       toSend.push({ type: "text", text: transcript.text });
     }
@@ -505,7 +497,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       telegramTools(ctx),
     );
 
-    const { textStream, response } = streamText({
+    const { textStream } = streamText({
       model: openai("o4-mini", {
         structuredOutputs: false,
       }),
@@ -528,6 +520,40 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       messages,
       maxSteps: 5,
       async onFinish(result) {
+        if (ctx.msg.audio || ctx.msg.voice) {
+          ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
+          const audioFile = (await replicate.run("minimax/speech-02-turbo", {
+            input: {
+              text: result.text.split("<|message|>").join("<#0.5#>"),
+              voice_id: "English_FriendlyPerson",
+              speed: 1,
+              volume: 2,
+              pitch: 0,
+              emotion: "auto",
+              english_normalization: true,
+              sample_rate: 32000,
+              bitrate: 128000,
+              channel: "mono",
+              language_boost: "English",
+            },
+            signal: ctx.session.task?.signal,
+          })) as FileOutput;
+
+          const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
+          ctx.session.tempFiles.push(rawPath);
+          await Bun.write(rawPath, await audioFile.blob());
+          const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
+          ctx.session.tempFiles.push(oggPath);
+          await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
+
+          await telegram.sendVoice(ctx.chatId, new InputFile(oggPath), {
+            reply_parameters: {
+              message_id: ctx.msgId,
+              allow_sending_without_reply: true,
+            },
+          });
+        }
+
         // Remove all pending requests
         await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
         ctx.session.task = null;
@@ -620,67 +646,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       }
     }
     await flushBuffer();
-
-    if (ctx.msg.audio || ctx.msg.voice) {
-      try {
-        const fullResponse = await response;
-        const fullText = fullResponse.messages
-          .filter((m) => m.role === "assistant")
-          .map((m) => m.content)
-          .join("\n");
-
-        const ttsInput = {
-          text: fullText,
-          voice_id: "Deep_Voice_Man",
-          speed: 1,
-          volume: 1,
-          pitch: 0,
-          emotion: "auto",
-          english_normalization: true,
-          sample_rate: 32000,
-          bitrate: 128000,
-          channel: "mono",
-          language_boost: "English",
-        };
-
-        const ttsSchema = z.object({
-          text: z.string(),
-          voice_id: z.string(),
-          speed: z.number(),
-          volume: z.number(),
-          pitch: z.number().int(),
-          emotion: z.string(),
-          english_normalization: z.boolean(),
-          sample_rate: z.number(),
-          bitrate: z.number(),
-          channel: z.string(),
-          language_boost: z.string(),
-        });
-
-        const audioUrl = await runModel(
-          "minimax/speech-02-turbo",
-          ttsSchema,
-          z.string(),
-          ttsInput,
-        );
-
-        await fs.mkdir(TEMP_DIR, { recursive: true });
-        const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
-        const arrayBuffer = await (await fetch(audioUrl)).arrayBuffer();
-        await fs.writeFile(rawPath, Buffer.from(arrayBuffer));
-        const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
-        await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
-
-        await telegram.sendVoice(ctx.chatId, new InputFile(oggPath), {
-          reply_to_message_id: ctx.msgId,
-        });
-
-        await fs.rm(rawPath, { force: true });
-        await fs.rm(oggPath, { force: true });
-      } catch (e) {
-        logger.error({ e }, "Error generating or sending voice message");
-      }
-    }
 
     // if (!userIsOwner) {
     //   if (userExceedsFreeMessages) {
