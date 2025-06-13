@@ -1,8 +1,16 @@
+import { browser } from "bot/browser";
+import { TEMP_DIR } from "bot/constants";
 import { checkWalletJob, freeTierResetJob } from "bot/crontab";
+import { clearAllRunningChatActions } from "bot/running-tasks";
+import fs from "node:fs/promises";
 
 export async function cleanup() {
   console.log("Init cleanup...");
 
-  freeTierResetJob.stop();
-  checkWalletJob.stop();
+  clearAllRunningChatActions();
+
+  await freeTierResetJob.stop();
+  await checkWalletJob.stop();
+  await browser.disconnect();
+  await fs.rm(TEMP_DIR, { recursive: true, force: true });
 }

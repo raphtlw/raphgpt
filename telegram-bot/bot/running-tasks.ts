@@ -5,6 +5,8 @@ import { cancellableInterval } from "utils/interval";
 
 type ChatActionKind = Parameters<typeof telegram.sendChatAction>[1];
 
+const RUNNING_CHAT_ACTIONS: Record<number, ChatAction[]> = [];
+
 // Chat action
 export class ChatAction {
   private chatId: number;
@@ -18,6 +20,12 @@ export class ChatAction {
 
     this.startInterval();
     this.sendChatAction(chatId, action);
+
+    if (!RUNNING_CHAT_ACTIONS[chatId]) {
+      RUNNING_CHAT_ACTIONS[chatId] = [this];
+    } else {
+      RUNNING_CHAT_ACTIONS[chatId].push(this);
+    }
   }
 
   async sendChatAction(chatId: number, action: ChatActionKind) {
@@ -36,5 +44,19 @@ export class ChatAction {
 
   stop() {
     this.abort.abort();
+  }
+}
+
+export function clearRunningChatActions(chatId: number) {
+  if (!RUNNING_CHAT_ACTIONS[chatId]) return;
+  while (RUNNING_CHAT_ACTIONS[chatId].length > 0) {
+    const chatAction = RUNNING_CHAT_ACTIONS[chatId].pop();
+    chatAction?.stop();
+  }
+}
+
+export function clearAllRunningChatActions() {
+  for (const chatId in RUNNING_CHAT_ACTIONS) {
+    clearRunningChatActions(parseInt(chatId));
   }
 }

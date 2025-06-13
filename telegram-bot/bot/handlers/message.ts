@@ -182,144 +182,79 @@ messageHandler.on(["message", "edit:text"]).filter(
       const file = await downloadFile(ctx);
       ctx.session.tempFiles.push(file.localPath);
       if (file.fileType) {
-        if (file.fileType.ext === "pdf") {
-          toSend.push({
-            type: "text",
-            text: "PDF file contents",
-          });
-
-          const pdfPages = await pdf2pic.fromPath(file.localPath).bulk(-1, {
-            responseType: "buffer",
-          });
-
-          for (const page of pdfPages) {
+        switch (file.fileType.ext) {
+          case "pdf": {
             toSend.push({
-              type: "image",
-              image: page.buffer!,
+              type: "text",
+              text: "PDF file contents",
             });
-          }
-        }
-        if (file.fileType.ext === "docx") {
-          toSend.push({
-            type: "text",
-            text: `DOCX file contents`,
-          });
 
-          const form = new FormData();
-          form.append("files", Bun.file(file.localPath));
-
-          const res = await fetch(
-            "http://gotenberg:3000/forms/libreoffice/convert",
-            {
-              method: "POST",
-              body: form,
-            },
-          );
-
-          if (!res.ok) {
-            throw new Error(
-              `Gotenberg failed with status ${res.status}: ${await res.text()}`,
-            );
-          }
-
-          const pdfPages = await pdf2pic
-            .fromBuffer(Buffer.from(await res.arrayBuffer()))
-            .bulk(-1, {
+            const pdfPages = await pdf2pic.fromPath(file.localPath).bulk(-1, {
               responseType: "buffer",
             });
 
-          for (const page of pdfPages) {
-            const resized = await sharp(page.buffer)
-              .resize({
-                fit: "contain",
-                width: 512,
-              })
-              .toBuffer();
+            for (const page of pdfPages) {
+              toSend.push({
+                type: "image",
+                image: page.buffer!,
+              });
+            }
+            break;
+          }
+          case "docx": {
+            toSend.push({
+              type: "text",
+              text: `DOCX file contents`,
+            });
+
+            const form = new FormData();
+            form.append("files", Bun.file(file.localPath));
+
+            const res = await fetch(
+              "http://gotenberg:3000/forms/libreoffice/convert",
+              {
+                method: "POST",
+                body: form,
+              },
+            );
+
+            if (!res.ok) {
+              throw new Error(
+                `Gotenberg failed with status ${res.status}: ${await res.text()}`,
+              );
+            }
+
+            const pdfPages = await pdf2pic
+              .fromBuffer(Buffer.from(await res.arrayBuffer()))
+              .bulk(-1, {
+                responseType: "buffer",
+              });
+
+            for (const page of pdfPages) {
+              const resized = await sharp(page.buffer)
+                .resize({
+                  fit: "contain",
+                  width: 512,
+                })
+                .toBuffer();
+              toSend.push({
+                type: "image",
+                image: resized,
+              });
+            }
+            break;
+          }
+          case "jpg":
+          case "jpeg":
+          case "png":
+          case "webp": {
             toSend.push({
               type: "image",
-              image: resized,
+              image: file.remoteUrl,
             });
+            break;
           }
         }
-        if (["jpg", "jpeg", "png", "webp"].includes(file.fileType.ext)) {
-          toSend.push({
-            type: "image",
-            image: file.remoteUrl,
-          });
-        }
-        // if (file.fileType.ext === "zip") {
-        //   // unzip the file
-        //   const contentDir = await fs.mkdtemp(
-        //     path.join(LOCAL_FILES_DIR, "zip-"),
-        //   );
-
-        //   await ctx.reply("Unzipping...", {
-        //     reply_parameters: {
-        //       message_id: ctx.msgId,
-        //       allow_sending_without_reply: true,
-        //     },
-        //   });
-
-        //   await runCommand(`unzip ${file.localPath}`, {
-        //     cwd: contentDir,
-        //   });
-
-        //   const filePaths = await globby("**", {
-        //     absolute: true,
-        //     ignore: [
-        //       "__MACOSX",
-        //       ".DS_Store",
-        //       ".idea",
-        //       ".gradle",
-        //       ".plugin_symlinks",
-        //       "windows/runner",
-        //       "macos/runner",
-        //       "node_modules",
-        //       "dart_project",
-        //     ].map((p) => `**/${p}/**`),
-        //     expandDirectories: true,
-        //     onlyFiles: true,
-        //     dot: true,
-        //     cwd: contentDir,
-        //   });
-
-        //   console.log(filePaths, "Unzipped files");
-
-        //   const textFilePaths = [];
-
-        //   for (const filePath of filePaths) {
-        //     const binaryType = await fileTypeFromBuffer(
-        //       await fs.promises.readFile(filePath),
-        //     );
-        //     if (!binaryType) {
-        //       textFilePaths.push(filePath);
-        //     }
-        //   }
-
-        //   const localFiles = await db
-        //     .insert(tables.localFiles)
-        //     .values(
-        //       textFilePaths.map((p) => ({
-        //         path: p,
-        //         content: fs.readFileSync(p, "utf-8"),
-        //       })),
-        //     )
-        //     .returning();
-
-        //   await fs.promises.rm(contentDir, { recursive: true, force: true });
-
-        //   toSend.push({
-        //     type: "text",
-        //     text: [
-        //       `ZIP file processed. File IDs:`,
-        //       ...localFiles.map((f) => f.id),
-        //     ].join("\n"),
-        //   });
-        //   toSend.push({
-        //     type: "text",
-        //     text: "You should call read_file tool to read files you may need.",
-        //   });
-        // }
       } else {
         toSend.push({
           type: "text",

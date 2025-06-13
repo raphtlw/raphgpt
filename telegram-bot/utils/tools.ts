@@ -1,7 +1,7 @@
-import { pipeline } from "@huggingface/transformers";
 import type { ToolSet } from "ai";
 import { inspect } from "bun";
 import similarity from "utils/cosine-similarity";
+import { featureExtractor } from "utils/feature-extractor";
 
 export function mergeTools(...toolSets: ToolSet[]): ToolSet {
   const tools: ToolSet = {};
@@ -14,11 +14,6 @@ export function mergeTools(...toolSets: ToolSet[]): ToolSet {
 
   return tools;
 }
-
-const featureExtractor = await pipeline(
-  "feature-extraction",
-  "Xenova/all-MiniLM-L6-v2",
-);
 
 /**
  * Semantically search a set of tools against a natural language query.

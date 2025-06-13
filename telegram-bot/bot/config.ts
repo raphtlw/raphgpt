@@ -23,8 +23,6 @@ export const getConfigValue = async <K extends keyof typeof configSchema.shape>(
 ): Promise<z.infer<typeof configSchema>[K]> => {
   const config = await redis.HGETALL(`config:${telegramUserId}`);
 
-  console.log(config);
-
   if (!config) {
     // Return the default value
     return configSchema.parse({ [key]: undefined })[key];

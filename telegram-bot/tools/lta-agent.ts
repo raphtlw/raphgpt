@@ -1,19 +1,14 @@
-import { pipeline } from "@huggingface/transformers";
 import { tool } from "ai";
 import { createAgent } from "bot/agents";
 import similarity from "utils/cosine-similarity";
 import { getEnv } from "utils/env";
+import { featureExtractor } from "utils/feature-extractor";
 import { z } from "zod";
 
 /**
  * ltaAgent: an agent that interacts with the LTA DataMall API
  * for Singapore bus timings, stops, services, and routes.
  */
-const featureExtractor = await pipeline(
-  "feature-extraction",
-  "Xenova/all-MiniLM-L6-v2",
-);
-
 export const ltaAgent = createAgent({
   name: "lta_agent",
   description:

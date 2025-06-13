@@ -58,17 +58,6 @@ export const messageParts = sqliteTable("message_parts", {
   originalName: text("original_name"), // Optional, original uploaded file name
 });
 
-export const localFiles = sqliteTable("local_files", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  path: text("path").notNull(),
-  content: text("content").notNull(),
-});
-
-export const prompts = sqliteTable("prompts", {
-  key: text("key").primaryKey(),
-  content: text("content").notNull(),
-});
-
 export const personality = sqliteTable("personality", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),

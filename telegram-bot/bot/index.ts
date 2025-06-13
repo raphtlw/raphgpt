@@ -9,7 +9,8 @@ import { generalHandler } from "bot/handlers/general";
 import { messageHandler } from "bot/handlers/message";
 import { personalityHandler } from "bot/handlers/personality";
 import { requestHandler } from "bot/handlers/request";
-import { ChatAction } from "bot/running-tasks";
+import { ChatAction, clearRunningChatActions } from "bot/running-tasks";
+import { inspect } from "bun";
 import {
   Bot,
   GrammyError,
@@ -104,6 +105,11 @@ bot.use(async (ctx, next) => {
   } finally {
     ctx.session.task = null;
     ctx.session.chatAction?.stop();
+    clearRunningChatActions(ctx.chatId!);
+
+    console.log(
+      `Temporary files after message handler: ${inspect(ctx.session.tempFiles)}`,
+    );
 
     if (ctx.session.tempFiles?.length > 0) {
       for (const filePath of ctx.session.tempFiles) {
@@ -144,14 +150,19 @@ bot.catch(async ({ error, ctx, message }) => {
   if (ctx.session.task) {
     ctx.session.task.abort();
   }
+  if (ctx.chatId) {
+    clearRunningChatActions(ctx.chatId!);
+  }
 
-  console.error(error, `Error while handling update ${ctx.update.update_id}`);
+  console.error(
+    `Error while handling update ${ctx.update.update_id}\n${inspect(error)}`,
+  );
   if (error instanceof GrammyError) {
     console.error(`Error in request: ${error.description}`);
   } else if (error instanceof HttpError) {
-    console.error(error, `Could not contact Telegram`);
+    console.error(`Could not contact Telegram: ${inspect(error)}`);
   } else {
-    console.error(error, "Unknown error");
+    console.error(`Unknown error: ${inspect(error)}`);
   }
   await ctx.reply(`Error: ${message}`);
 });
