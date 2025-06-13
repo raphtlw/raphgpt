@@ -206,33 +206,18 @@ export async function pullMessagesByChatAndUser({
   userId: number;
   limit?: number;
 }): Promise<CoreMessage[]> {
-  let messageIdRows;
-  if (limit !== undefined) {
-    messageIdRows = await db
-      .select({ id: tables.messages.id })
-      .from(tables.messages)
-      .where(
-        and(
-          eq(tables.messages.chatId, chatId),
-          eq(tables.messages.userId, userId),
-        ),
-      )
-      .orderBy(tables.messages.createdAt)
-      .limit(limit)
-      .all();
-  } else {
-    messageIdRows = await db
-      .select({ id: tables.messages.id })
-      .from(tables.messages)
-      .where(
-        and(
-          eq(tables.messages.chatId, chatId),
-          eq(tables.messages.userId, userId),
-        ),
-      )
-      .orderBy(tables.messages.createdAt)
-      .all();
-  }
+  // Fetch all message IDs for this chat and user, ordered by creation time
+  const messageIdRows = await db
+    .select({ id: tables.messages.id })
+    .from(tables.messages)
+    .where(
+      and(
+        eq(tables.messages.chatId, chatId),
+        eq(tables.messages.userId, userId),
+      ),
+    )
+    .orderBy(tables.messages.createdAt)
+    .all();
 
   const messageIds = messageIdRows.map((r) => r.id);
   // Retrieve full messages and ensure that any assistant tool-calls are
@@ -251,6 +236,7 @@ export async function pullMessagesByChatAndUser({
     }
   }
 
+  // Flatten messages: skip standalone tool messages, attach tool results after assistant messages
   const grouped: CoreMessage[] = [];
   for (const msg of rawMessages) {
     if (msg.role === "tool") {
@@ -272,7 +258,33 @@ export async function pullMessagesByChatAndUser({
       }
     }
   }
-  return grouped;
+
+  // Group messages into [user, assistant + tool results] sets
+  const sets: CoreMessage[][] = [];
+  let currentSet: CoreMessage[] = [];
+  for (const msg of grouped) {
+    if (msg.role === "user") {
+      if (currentSet.length > 0) {
+        sets.push(currentSet);
+      }
+      currentSet = [msg];
+    } else {
+      if (currentSet.length === 0) {
+        currentSet = [msg];
+      } else {
+        currentSet.push(msg);
+      }
+    }
+  }
+  if (currentSet.length > 0) {
+    sets.push(currentSet);
+  }
+
+  // Limit number of sets to the most recent `limit` sets if provided
+  const limitedSets = limit !== undefined ? sets.slice(-limit) : sets;
+
+  // Flatten sets back into CoreMessage[] and return
+  return limitedSets.flat();
 }
 
 /**

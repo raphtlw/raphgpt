@@ -29,7 +29,7 @@ Your mission:
 Sample user requests:
   • “When does the next bus 15 arrive at Eunos Station?”
   • “Give me bus timings for all services at Parkway Parade.”
-  • “What is the passenger volume at bus stop 64009 for August 2024?”
+  • “What is the passenger volume at bus stop 64009 for August 2025?”
 
 Available tools:
   • get_bus_arrival_timings(stop_id, service_no?, accept?): Real-time next bus arrivals for a stop (and optional service).
@@ -40,6 +40,8 @@ Available tools:
   • get_passenger_volume_by_bus_stop(date?, accept?): Get tap-in/tap-out volumes for a bus stop (YYYYMM).
 
 When invoking a tool, return only the JSON payload for the tool call. Do not include explanatory text or formatting.
+
+Expand all abbreviations when answering back to your parent agent.
 `,
   createTools: (toolData) => ({
     get_bus_arrival_timings: tool({
@@ -63,9 +65,9 @@ Response attributes:
   - Latitude: Current estimated latitude of bus (e.g. '1.3154918333333334')
   - Longitude: Current estimated longitude of bus (e.g. '103.9059125')
   - VisitNumber: Ordinal visit count at this bus stop (e.g. '1')
-  - Load: Current bus occupancy level: SEA, SDA, LSD
-  - Feature: Wheel-chair accessible (WAB) or blank
-  - Type: Vehicle type: SD, DD, BD
+  - Load: Current bus occupancy level: SEA (for Seats Available), SDA (for Standing Available), LSD (for Limited Standing)
+  - Feature: WAB (Wheel-chair accessible) or blank
+  - Type: Vehicle type: SD (for Single Deck), DD (for Double Deck), BD (for Bendy)
 `,
       parameters: z.object({
         stop_id: z.string().describe("Bus stop code (BusStopCode)"),
