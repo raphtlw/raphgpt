@@ -1,4 +1,3 @@
-import logger from "bot/logger";
 import { inspect } from "bun";
 import { handleUserWalletBalanceChange } from "connections/solana";
 import { CronJob } from "cron";
@@ -10,7 +9,7 @@ export const freeTierResetJob = new CronJob("0 0 * * *", async () => {
   const result = await db.update(tables.users).set({
     freeTierMessageCount: 0,
   });
-  logger.info(`Reset free tier message quota: ${inspect(result)}`);
+  console.log(`Reset free tier message quota: ${inspect(result)}`);
 });
 
 // Handle wallet balance changes

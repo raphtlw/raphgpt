@@ -15,7 +15,6 @@ import { getConfigValue } from "bot/config";
 import { DATA_DIR, LLM_TOOLS_LIMIT, TEMP_DIR } from "bot/constants";
 import { insertMessage, pullMessageHistory } from "bot/context-history";
 import { retrieveUser } from "bot/helpers";
-import logger from "bot/logger";
 import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
 import { $, inspect } from "bun";
@@ -284,7 +283,7 @@ messageHandler.on(["message", "edit:text"]).filter(
         //     cwd: contentDir,
         //   });
 
-        //   logger.info(filePaths, "Unzipped files");
+        //   console.log(filePaths, "Unzipped files");
 
         //   const textFilePaths = [];
 
@@ -413,7 +412,7 @@ messageHandler.on(["message", "edit:text"]).filter(
       });
     }
 
-    logger.debug(
+    console.log(
       `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
     );
 
@@ -444,7 +443,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
 
     const relatedTurns = await searchChatMemory(chatId, summary.query, 4);
 
-    logger.debug(`Most relevant conversation turns: ${inspect(relatedTurns)}`);
+    console.log(`Most relevant conversation turns: ${inspect(relatedTurns)}`);
 
     const messages: CoreMessage[] = [];
 
@@ -453,7 +452,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       messages.push(...relatedMessages);
     }
 
-    logger.debug(`Message history: ${inspect(messages)}`);
+    console.log(`Message history: ${inspect(messages)}`);
 
     messages.push({
       role: "system",
@@ -466,7 +465,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         jsons.map((c: string) => SuperJSON.parse<UserContent>(c)),
       );
 
-    logger.debug(`Pending requests: ${inspect(pendingRequests)}`);
+    console.log(`Pending requests: ${inspect(pendingRequests)}`);
 
     const content = [...pendingRequests.flat(1), ...toSend] as UserContent;
 
@@ -475,7 +474,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       content,
     });
 
-    logger.debug(`Sending message to model: ${inspect(content)}`);
+    console.log(`Sending message to model: ${inspect(content)}`);
 
     await redis.RPUSH(
       `pending_requests:${ctx.chatId}:${userId}`,
@@ -558,10 +557,10 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
         ctx.session.task = null;
 
-        logger.debug(`Model finished with ${result.finishReason}`);
+        console.log(`Model finished with ${result.finishReason}`);
 
         if (result.finishReason === "tool-calls") {
-          logger.info(
+          console.log(
             `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
           );
           return;
@@ -603,7 +602,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         }
       },
       async onError({ error }) {
-        logger.error(error, "Encountered error during AI streaming");
+        console.error(error, "Encountered error during AI streaming");
         ctx.session.task?.abort();
       },
       abortSignal: ctx.session.task.signal,
@@ -613,7 +612,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
     let firstMessageSent = false;
 
     const flushBuffer = async () => {
-      logger.debug(`About to flush: ${textBuffer}`);
+      console.log(`About to flush: ${textBuffer}`);
 
       // flush the buffer
       if (textBuffer.trim().length > 0) {

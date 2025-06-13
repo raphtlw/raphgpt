@@ -2,7 +2,6 @@ import { b, fmt } from "@grammyjs/parse-mode";
 import { Raydium } from "@raydium-io/raydium-sdk-v2";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import { db, tables } from "db";
 import { eq, sql } from "drizzle-orm";
@@ -44,7 +43,7 @@ export const handleUserWalletBalanceChange = async (
 ) => {
   // Lock this process
   while (handleUserWalletBalanceChangeLock) {
-    logger.debug("Waiting for lock...");
+    console.log("Waiting for lock...");
     await Bun.sleep(100);
   }
   handleUserWalletBalanceChangeLock = true;
@@ -57,7 +56,7 @@ export const handleUserWalletBalanceChange = async (
         programId: TOKEN_PROGRAM_ID,
       },
     );
-  logger.debug(
+  console.log(
     `Found ${tokenAccountResponse.value.length} tokens in wallet: ${inspect(
       tokenAccountResponse,
     )}`,
@@ -68,9 +67,9 @@ export const handleUserWalletBalanceChange = async (
       const mintAddress = parsedAccountInfo.parsed.info.mint;
       const tokenBalance = parsedAccountInfo.parsed.info.tokenAmount.uiAmount;
 
-      logger.debug(`Token account: ${token.pubkey.toString()}`);
-      logger.debug(`Mint address: ${mintAddress}`);
-      logger.debug(`Balance: ${tokenBalance}`);
+      console.log(`Token account: ${token.pubkey.toString()}`);
+      console.log(`Mint address: ${mintAddress}`);
+      console.log(`Balance: ${tokenBalance}`);
     }
   }
 

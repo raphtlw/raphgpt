@@ -1,7 +1,6 @@
 import { openai } from "@ai-sdk/openai";
 import { generateText, tool, type CoreMessage, type ToolSet } from "ai";
 import { getConfigValue } from "bot/config";
-import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
 import { redis } from "connections/redis";
@@ -110,12 +109,12 @@ export const agentExecute =
       // Cannot save because subsequent calls will result in error
       // Errors saying tool-call must be followed by tool call result
 
-      logger.debug({ response, finishReason }, "Not saving (from createAgent)");
+      console.log({ response, finishReason }, "Not saving (from createAgent)");
       return `Result ended abruptly without direct response from agent: ${text}`;
     }
 
     // Save context history in Redis
-    logger.debug(response, `Response from ${name} agent`);
+    console.log(response, `Response from ${name} agent`);
     context.push(...response.messages);
     await redis.set(redisKey, SuperJSON.stringify(context), {
       expiration: {

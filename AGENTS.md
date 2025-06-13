@@ -39,5 +39,5 @@ Agents have their own data, and this data is the same as the one passed into any
 When creating agentic tools, be as specific as possible, so that LLMs can understand what information they are expected to give them,
 and what the (agentic tools) purpose is as a sub-agent.
 
-When creating agentic tools, in the createTools parameter when defining tools, try to write comments and logger statements.
+When creating agentic tools, in the createTools parameter when defining tools, try to write comments and log statements.
 Log in debug mode, so that I (the user) can look at the logs to easily debug information.

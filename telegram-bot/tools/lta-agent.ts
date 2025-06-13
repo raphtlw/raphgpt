@@ -1,7 +1,6 @@
 import { pipeline } from "@huggingface/transformers";
 import { tool } from "ai";
 import { createAgent } from "bot/agents";
-import logger from "bot/logger";
 import similarity from "utils/cosine-similarity";
 import { getEnv } from "utils/env";
 import { z } from "zod";
@@ -267,7 +266,7 @@ Always return only a valid tool call in JSON format without any additional text 
             );
           }
           const body = await resp.json();
-          logger.debug(body, `LTA bus data from get_bus_services skip=${skip}`);
+          console.log(body, `LTA bus data from get_bus_services skip=${skip}`);
           const page = Array.isArray(body.value) ? body.value : [];
           if (page.length === 0) break;
           results.push(...page);
@@ -308,7 +307,7 @@ Always return only a valid tool call in JSON format without any additional text 
             );
           }
           const body = await resp.json();
-          logger.debug(body, `LTA bus data from get_bus_routes skip=${skip}`);
+          console.log(body, `LTA bus data from get_bus_routes skip=${skip}`);
           const page = Array.isArray(body.value) ? body.value : [];
           if (page.length === 0) break;
           results.push(...page);

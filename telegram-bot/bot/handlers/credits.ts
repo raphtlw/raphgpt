@@ -2,7 +2,6 @@ import { b, code, fmt } from "@grammyjs/parse-mode";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import type { BotContext } from "bot";
 import { retrieveUser } from "bot/helpers";
-import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import { inspect } from "bun";
 import {
@@ -134,7 +133,7 @@ creditsHandler.callbackQuery("payment-method-solana", async (ctx) => {
   solanaConnection.onAccountChange(
     new PublicKey(wallet.publicKey),
     async (updatedAccountInfo) => {
-      logger.debug(
+      console.log(
         `Received solana account info: ${inspect(updatedAccountInfo)}`,
       );
 
@@ -185,7 +184,7 @@ creditsHandler.callbackQuery("payment-method-stripe", async (ctx) => {
 });
 
 creditsHandler.callbackQuery(/deposit-amount-(\d+)/, async (ctx) => {
-  logger.debug(`deposit-amount matched: ${ctx.match}`);
+  console.log(`deposit-amount matched: ${ctx.match}`);
 
   if (!ctx.match[1]) throw new Error("No deposit amount found");
 

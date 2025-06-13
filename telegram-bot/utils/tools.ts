@@ -1,6 +1,5 @@
 import { pipeline } from "@huggingface/transformers";
 import type { ToolSet } from "ai";
-import logger from "bot/logger";
 import { inspect } from "bun";
 import similarity from "utils/cosine-similarity";
 
@@ -71,7 +70,7 @@ export async function searchTools(
     outputSet[scored.name] = tool;
   }
 
-  logger.debug(`Result scores for tools: ${inspect(scores)}`);
+  console.log(`Result scores for tools: ${inspect(scores)}`);
 
   return outputSet;
 }

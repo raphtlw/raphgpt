@@ -1,4 +1,3 @@
-import logger from "bot/logger.js";
 import { redis } from "connections/redis";
 import lang from "iso-language-codes";
 import { z } from "zod";
@@ -24,7 +23,7 @@ export const getConfigValue = async <K extends keyof typeof configSchema.shape>(
 ): Promise<z.infer<typeof configSchema>[K]> => {
   const config = await redis.HGETALL(`config:${telegramUserId}`);
 
-  logger.debug(config);
+  console.log(config);
 
   if (!config) {
     // Return the default value

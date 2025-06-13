@@ -1,6 +1,5 @@
 import type { BotContext } from "bot";
 import { retrieveUser } from "bot/helpers";
-import logger from "bot/logger";
 import { s3 } from "bun";
 import { redis } from "connections/redis";
 import { vectorStore } from "connections/vector";
@@ -69,7 +68,7 @@ generalHandler.command("clear", async (ctx) => {
           try {
             await s3.file(key, { region, bucket }).delete();
           } catch (error) {
-            logger.warn(
+            console.warn(
               `Failed to delete S3 file ${key} from ${bucket}/${region}: ${error}`,
             );
           }

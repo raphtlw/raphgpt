@@ -7,7 +7,6 @@ import {
 } from "@solana/web3.js";
 import { tool } from "ai";
 import { createAgent } from "bot/agents";
-import logger from "bot/logger";
 import { inspect } from "bun";
 import { format } from "date-fns";
 import { z } from "zod";
@@ -72,7 +71,7 @@ Always use get_sol_signatures before assuming there are no transactions associat
           { limit },
         );
 
-        logger.debug(signatures, "Confirmed signatures");
+        console.log(signatures, "Confirmed signatures");
 
         const formatted: string[] = [];
         for (const sig of signatures) {

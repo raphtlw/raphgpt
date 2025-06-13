@@ -1,6 +1,5 @@
 import { createConversation } from "@grammyjs/conversations";
 import type { BotContext } from "bot";
-import logger from "bot/logger";
 import { db, tables } from "db";
 import { eq } from "drizzle-orm";
 import { Composer, InlineKeyboard } from "grammy";
@@ -83,7 +82,7 @@ const personalityMenu = async (ctx: BotContext, page: number) => {
 };
 
 personalityHandler.callbackQuery(/personality-(\d+)/, async (ctx) => {
-  logger.debug(`Personality: ${ctx.match}`);
+  console.log(`Personality: ${ctx.match}`);
 
   if (!ctx.match[1]) throw new Error("Personality index not matched");
 
@@ -92,7 +91,7 @@ personalityHandler.callbackQuery(/personality-(\d+)/, async (ctx) => {
 });
 
 personalityHandler.callbackQuery(/personality-(start|end)/, async (ctx) => {
-  logger.debug(`Personality: ${ctx.match}`);
+  console.log(`Personality: ${ctx.match}`);
 
   if (!ctx.from) throw new Error("ctx.from not found");
 
@@ -131,13 +130,13 @@ personalityHandler.use(
 );
 
 personalityHandler.callbackQuery(/personality-add/, async (ctx) => {
-  logger.debug(`Personality: ${ctx.match}`);
+  console.log(`Personality: ${ctx.match}`);
 
   await ctx.conversation.enter("personality-add");
 });
 
 personalityHandler.callbackQuery(/personality-remove-(\d+)/, async (ctx) => {
-  logger.debug(`Personality: ${ctx.match}`);
+  console.log(`Personality: ${ctx.match}`);
 
   if (!ctx.match[1]) throw new Error("Personality index not matched");
 

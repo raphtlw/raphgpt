@@ -1,7 +1,6 @@
 import { fmt } from "@grammyjs/parse-mode";
 import { tool } from "ai";
 import { browser } from "bot/browser";
-import logger from "bot/logger";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
 import { encoding_for_model } from "tiktoken";
@@ -48,7 +47,7 @@ export function raphgptTools(data: ToolData) {
           throw new Error(`not ok ${await resp.text()}`);
         }
         const res = (await resp.json()) as any;
-        logger.debug(res, "Google Search Response");
+        console.log(res, "Google Search Response");
 
         const results: {
           title: string;
@@ -70,11 +69,11 @@ export function raphgptTools(data: ToolData) {
             });
             const html = await page.content();
 
-            logger.debug(html);
+            console.log(html);
 
             const markdown = await convertHtmlToMarkdown(html);
 
-            logger.debug(markdown);
+            console.log(markdown);
 
             await page.close();
 
@@ -109,11 +108,11 @@ export function raphgptTools(data: ToolData) {
         });
         const html = await page.content();
 
-        logger.debug(html);
+        console.log(html);
 
         const markdown = await convertHtmlToMarkdown(html);
 
-        logger.debug(markdown);
+        console.log(markdown);
 
         await page.close();
 
@@ -155,7 +154,7 @@ export function raphgptTools(data: ToolData) {
           .optional(),
       }),
       async execute({ text_query, lat, lon }) {
-        logger.debug({ text_query, lat, lon });
+        console.log({ text_query, lat, lon });
 
         const resp = await fetch(
           "https://places.googleapis.com/v1/places:searchText",

@@ -1,7 +1,6 @@
 import { b, fmt } from "@grammyjs/parse-mode";
 import type { LanguageModelUsage } from "ai";
 import type { BotContext } from "bot";
-import logger from "bot/logger";
 import { db, tables } from "db";
 import { eq, sql } from "drizzle-orm";
 
@@ -74,5 +73,5 @@ const deductCredits = async (ctx: BotContext, usage: LanguageModelUsage) => {
     })
     .where(eq(tables.users.userId, ctx.from.id));
 
-  logger.debug({ cost }, "Deducted credits");
+  console.log({ cost }, "Deducted credits");
 };

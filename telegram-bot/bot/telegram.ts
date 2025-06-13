@@ -1,6 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
 import { TEMP_DIR } from "bot/constants";
-import logger from "bot/logger";
 import { fileTypeFromBuffer, type FileTypeResult } from "file-type";
 import fs from "fs";
 import { Api, Context } from "grammy";
@@ -38,7 +37,7 @@ export const downloadFile = async (
     // Detect file type
     const fileBuffer = await fs.promises.readFile(localPath);
     const fileType = await fileTypeFromBuffer(new Uint8Array(fileBuffer));
-    logger.info(fileType, "Document file type");
+    console.log(fileType, "Document file type");
 
     // Rename file with better extension
     if (fileType) {
