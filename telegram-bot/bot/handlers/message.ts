@@ -560,7 +560,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         console.log(`Model finished with ${result.finishReason}`);
 
         if (result.finishReason === "tool-calls") {
-          console.log(
+          console.error(
             `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
           );
           return;

@@ -45,7 +45,7 @@ bot.use(
 );
 bot.use(conversations());
 bot.use(async (ctx, next) => {
-  console.log({ update: ctx.update }, "Update Received");
+  console.log("Update Received:", { update: ctx.update });
   await next();
 });
 
