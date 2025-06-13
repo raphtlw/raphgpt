@@ -43,8 +43,30 @@ When invoking a tool, return only the JSON payload for the tool call. Do not inc
 `,
   createTools: (toolData) => ({
     get_bus_arrival_timings: tool({
-      description:
-        "Get real-time bus arrival information for a bus stop code and optional service number.",
+      description: `Real-time Bus Arrival information for a queried Bus Stop including next 3 oncoming buses.
+URL: https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival
+Description: Returns real-time Bus Arrival information of Bus Services at a queried Bus Stop, including Est. Arrival Time, Est. Current Location, Est. Current Load.
+Update Freq: 20 seconds
+
+Request parameters:
+- BusStopCode: Bus stop reference code (required)
+- ServiceNo: Bus service number (optional)
+
+Response attributes:
+- ServiceNo: Bus service number (e.g. '15')
+- Operator: Public Transport Operator code: SBST, SMRT, TTS, GAS
+- NextBus, NextBus2, NextBus3: Objects with:
+  - OriginCode: Reference code of the first bus stop where this bus started its service
+  - DestinationCode: Reference code of the last bus stop where this bus will terminate its service
+  - EstimatedArrival: Estimated arrival time in ISO format (e.g. '2024-08-14T16:41:48+08:00')
+  - Monitored: 1 if estimated based on bus location, 0 if based on schedule
+  - Latitude: Current estimated latitude of bus (e.g. '1.3154918333333334')
+  - Longitude: Current estimated longitude of bus (e.g. '103.9059125')
+  - VisitNumber: Ordinal visit count at this bus stop (e.g. '1')
+  - Load: Current bus occupancy level: SEA, SDA, LSD
+  - Feature: Wheel-chair accessible (WAB) or blank
+  - Type: Vehicle type: SD, DD, BD
+`,
       parameters: z.object({
         stop_id: z.string().describe("Bus stop code (BusStopCode)"),
         service_no: z
@@ -78,8 +100,15 @@ When invoking a tool, return only the JSON payload for the tool call. Do not inc
     }),
 
     find_bus_stops_by_name: tool({
-      description:
-        "Find bus stops whose description or road name contains a search string.",
+      description: `Search for bus stops by name or road semantically.
+Response attributes:
+- BusStopCode: The unique 5-digit identifier for this physical bus stop (e.g. '01012')
+- RoadName: The road on which this bus stop is located (e.g. 'Victoria St')
+- Description: Landmarks next to the bus stop to aid in identifying this bus stop (e.g. 'Hotel Grand Pacific')
+- Latitude: Location coordinates for this bus stop (e.g. 1.29685)
+- Longitude: Location coordinates for this bus stop (e.g. 103.853)
+- score: Similarity score between query and bus stop description (range 0-1)
+`,
       parameters: z.object({
         query: z.string().describe("Search string to filter bus stops"),
         accept: z
@@ -298,7 +327,10 @@ Response attributes:
               (service_no && r.ServiceNo === service_no) ||
               (origin_code && r.OriginCode === origin_code),
           );
-          if (filtered.length) results.push(...filtered);
+          if (filtered.length) {
+            results.push(...filtered);
+            break;
+          }
           skip += 500;
         }
         return results.map((r: any) => ({
@@ -370,7 +402,10 @@ Response attributes:
           const page: any[] = Array.isArray(body.value) ? body.value : [];
           if (page.length === 0) break;
           const matches = page.filter((r) => r.ServiceNo === service_no);
-          if (matches.length) results.push(...matches);
+          if (matches.length) {
+            results.push(...matches);
+            break;
+          }
           skip += 500;
         }
         return results.map((r: any) => ({
