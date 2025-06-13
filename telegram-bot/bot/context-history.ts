@@ -5,12 +5,14 @@ import type {
   FilePart,
   ImagePart,
   TextPart,
+  ToolCallPart,
   ToolContent,
+  ToolResultPart,
   UserContent,
 } from "ai";
 import { s3 } from "bun";
 import { db, tables } from "db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import superjson from "superjson";
 
 export async function insertUserMessage({
@@ -191,12 +193,99 @@ export async function insertMessage({
   }
 }
 
-export async function pullMessageHistory(messageIds: number[]) {
+/**
+ * Fetch messages for a given chatId and userId, ordered by creation time.
+ * Optionally limits the number of messages returned.
+ */
+export async function pullMessagesByChatAndUser({
+  chatId,
+  userId,
+  limit,
+}: {
+  chatId: number;
+  userId: number;
+  limit?: number;
+}): Promise<CoreMessage[]> {
+  let messageIdRows;
+  if (limit !== undefined) {
+    messageIdRows = await db
+      .select({ id: tables.messages.id })
+      .from(tables.messages)
+      .where(
+        and(
+          eq(tables.messages.chatId, chatId),
+          eq(tables.messages.userId, userId),
+        ),
+      )
+      .orderBy(tables.messages.createdAt)
+      .limit(limit)
+      .all();
+  } else {
+    messageIdRows = await db
+      .select({ id: tables.messages.id })
+      .from(tables.messages)
+      .where(
+        and(
+          eq(tables.messages.chatId, chatId),
+          eq(tables.messages.userId, userId),
+        ),
+      )
+      .orderBy(tables.messages.createdAt)
+      .all();
+  }
+
+  const messageIds = messageIdRows.map((r) => r.id);
+  // Retrieve full messages and ensure that any assistant tool-calls are
+  // immediately followed by their corresponding tool-result messages,
+  // as required by the OpenAI API when using tools.
+  const rawMessages = await pullMessageHistory(messageIds);
+  const toolMap = new Map<string, CoreMessage[]>();
+  for (const msg of rawMessages) {
+    if (msg.role === "tool") {
+      const parts = msg.content as ToolResultPart[];
+      for (const p of parts) {
+        const list = toolMap.get(p.toolCallId) || [];
+        list.push(msg);
+        toolMap.set(p.toolCallId, list);
+      }
+    }
+  }
+
+  const grouped: CoreMessage[] = [];
+  for (const msg of rawMessages) {
+    if (msg.role === "tool") {
+      continue;
+    }
+    grouped.push(msg);
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      const parts = msg.content as (ToolCallPart | unknown)[];
+      for (const p of parts) {
+        if ((p as ToolCallPart).type === "tool-call") {
+          const id = (p as ToolCallPart).toolCallId;
+          const tools = toolMap.get(id);
+          if (tools) {
+            for (const t of tools) {
+              grouped.push(t);
+            }
+          }
+        }
+      }
+    }
+  }
+  return grouped;
+}
+
+/**
+ * Raw DB fetch/mapping of messages by their IDs into CoreMessage[].
+ * Does not perform tool-call grouping.
+ */
+async function getRawMessageHistory(
+  messageIds: number[],
+): Promise<CoreMessage[]> {
   const messages: CoreMessage[] = [];
 
   const rows = await db
     .select({
-      // Message fields
       messageId: tables.messages.id,
       chatId: tables.messages.chatId,
       userId: tables.messages.userId,
@@ -204,7 +293,6 @@ export async function pullMessageHistory(messageIds: number[]) {
       createdAt: tables.messages.createdAt,
       assistantParts: tables.messages.assistantParts,
       toolParts: tables.messages.toolParts,
-      // Message part fields
       partId: tables.messageParts.id,
       partOrder: tables.messageParts.order,
       partType: tables.messageParts.type,
@@ -231,25 +319,18 @@ export async function pullMessageHistory(messageIds: number[]) {
     groups.set(r.messageId, arr);
   }
 
-  for (const [messageId, groupRows] of groups) {
-    const first = groupRows[0]!; // all rows share the same message metadata
-
+  for (const [, groupRows] of groups) {
+    const first = groupRows[0]!;
     switch (first.role) {
       case "user": {
         const userContent: UserContent = [];
-
-        // parts already sorted by order
         for (const part of groupRows) {
           if (!part.partId) continue;
-
           if (part.partType === "text") {
             userContent.push({ type: "text", text: part.text! });
           } else if (part.partType === "image") {
             const buf = await s3
-              .file(part.key!, {
-                region: part.region!,
-                bucket: part.bucket!,
-              })
+              .file(part.key!, { region: part.region!, bucket: part.bucket! })
               .arrayBuffer();
             userContent.push({
               type: "image",
@@ -258,10 +339,7 @@ export async function pullMessageHistory(messageIds: number[]) {
             });
           } else if (part.partType === "file") {
             const buf = await s3
-              .file(part.key!, {
-                region: part.region!,
-                bucket: part.bucket!,
-              })
+              .file(part.key!, { region: part.region!, bucket: part.bucket! })
               .arrayBuffer();
             userContent.push({
               type: "file",
@@ -271,35 +349,32 @@ export async function pullMessageHistory(messageIds: number[]) {
             });
           }
         }
-
-        messages.push({
-          role: "user",
-          content: userContent,
-        });
+        messages.push({ role: "user", content: userContent });
         break;
       }
-
       case "tool": {
         const toolContent = superjson.parse<ToolContent>(first.toolParts!);
-        messages.push({
-          role: "tool",
-          content: toolContent,
-        });
+        messages.push({ role: "tool", content: toolContent });
         break;
       }
-
       case "assistant": {
         const assistantContent = superjson.parse<AssistantContent>(
           first.assistantParts!,
         );
-        messages.push({
-          role: "assistant",
-          content: assistantContent,
-        });
+        messages.push({ role: "assistant", content: assistantContent });
         break;
       }
     }
   }
 
   return messages;
+}
+
+/**
+ * Fetch messages by IDs from the DB.
+ */
+export async function pullMessageHistory(
+  messageIds: number[],
+): Promise<CoreMessage[]> {
+  return getRawMessageHistory(messageIds);
 }

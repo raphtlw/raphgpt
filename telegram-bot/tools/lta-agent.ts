@@ -19,21 +19,28 @@ export const ltaAgent = createAgent({
       .string()
       .describe("Natural language instruction for LTA bus operations"),
   }),
-  system: `You are the LTA DataMall sub-agent using the Singapore Land Transport Authority DataMall API.
-All requests must be GET and include the AccountKey header.
-To request XML instead of JSON, include an Accept header set to "application/atom+xml"; default is JSON.
-Most endpoints return up to 500 records per call. Pagination is handled automatically, so no $skip parameter is exposed.
-Use these operations to answer queries about bus arrival, stops, services, routes, and passenger volume:
-- get_bus_arrival_timings(stop_id, service_no?, accept?): real-time bus arrival info for a stop code and optional service.
-- find_bus_stops_by_name(query, accept?): semantically search bus stop names, automatically paging until relevant matches are found.
-- find_bus_stops_near_location(lat, lon, radius?, accept?): search bus stops within radius (km) of coordinates.
-- get_bus_services(accept?): detailed info of all bus services in operation.
-- get_bus_routes(accept?): detailed route info (stop sequence and timings) for all bus services.
-- get_passenger_volume_by_bus_stop(date?, accept?): tap-in/tap-out passenger volume by bus stop.
-- get_passenger_volume_by_od_bus(date?, accept?): weekday/weekend trips between origin-destination bus stops.
-- get_passenger_volume_by_od_train(date?, accept?): weekday/weekend trips between origin-destination train stations.
-- get_passenger_volume_by_train(date?, accept?): tap-in/tap-out passenger volume by train station.
-Always return only a valid tool call in JSON format without any additional text or explanation.`,
+  system: `
+You are the LTA DataMall Agent, a specialized sub-agent for bus-related queries in Singapore on behalf of a higher-level language model.
+
+Your mission:
+  • Answer natural language questions about bus arrival times, stop information, service routes, and passenger volumes.
+  • Enrich responses with helpful details like upcoming bus schedules, stop sequences, and ridership data.
+
+Sample user requests:
+  • “When does the next bus 15 arrive at Eunos Station?”
+  • “Give me bus timings for all services at Parkway Parade.”
+  • “What is the passenger volume at bus stop 64009 for August 2024?”
+
+Available tools:
+  • get_bus_arrival_timings(stop_id, service_no?, accept?): Real-time next bus arrivals for a stop (and optional service).
+  • find_bus_stops_by_name(query, accept?): Search bus stops by name or road semantically.
+  • find_bus_stops_near_location(lat, lon, radius?, accept?): Find bus stops within a radius (km) of coordinates.
+  • get_bus_services(service_no?, origin_code?, accept?): Retrieve service details for a specified route or origin stop.
+  • get_bus_route_for_service(service_no, accept?): Obtain the stop sequence and schedule for a specific service.
+  • get_passenger_volume_by_bus_stop(date?, accept?): Get tap-in/tap-out volumes for a bus stop (YYYYMM).
+
+When invoking a tool, return only the JSON payload for the tool call. Do not include explanatory text or formatting.
+`,
   createTools: (toolData) => ({
     get_bus_arrival_timings: tool({
       description:
@@ -231,17 +238,41 @@ Always return only a valid tool call in JSON format without any additional text 
     }),
 
     get_bus_services: tool({
-      description:
-        "Get detailed service information for all bus services in operation.",
-      parameters: z.object({
-        accept: z
-          .enum(["application/json", "application/atom+xml"])
-          .optional()
-          .describe(
-            "Response format: 'application/json' (default) or 'application/atom+xml' for XML",
-          ),
-      }),
-      async execute({ accept }) {
+      description: `Retrieve bus service details filtered by service_no or origin_code.
+Response attributes:
+- ServiceNo: The bus service number (e.g. '107M')
+- Operator: Operator for this bus service (e.g. 'SBST')
+- Direction: The direction bus travels (1 or 2); loop services only have 1 direction
+- Category: Category of the bus service (EXPRESS, FEEDER, INDUSTRIAL, TOWNLINK, TRUNK, etc.)
+- OriginCode: Bus stop code for first bus stop (e.g. '64009')
+- DestinationCode: Bus stop code for last bus stop (e.g. '64009')
+- AM_Peak_Freq: Dispatch frequency during AM Peak (0630H-0830H) in minutes (e.g. '14-17')
+- AM_Offpeak_Freq: Dispatch frequency during AM Off-Peak (0831H-1659H) in minutes (e.g. '10-16')
+- PM_Peak_Freq: Dispatch frequency during PM Peak (1700H-1900H) in minutes (e.g. '12-15')
+- PM_Offpeak_Freq: Dispatch frequency after PM Off-Peak (e.g. '12-15')
+- LoopDesc: Loop location for loop services; empty if not a loop service (e.g. 'Raffles Blvd')`,
+      parameters: z
+        .object({
+          service_no: z
+            .string()
+            .optional()
+            .describe("Bus service number (ServiceNo), e.g. '107M'."),
+          origin_code: z
+            .string()
+            .optional()
+            .describe("Bus stop code to filter by origin stop, e.g. '64009'."),
+          accept: z
+            .enum(["application/json", "application/atom+xml"])
+            .optional()
+            .describe(
+              "Response format: 'application/json' (default) or 'application/atom+xml' for XML",
+            ),
+        })
+        .refine(
+          (o) => !!(o.service_no || o.origin_code),
+          "Either service_no or origin_code must be specified",
+        ),
+      async execute({ service_no, origin_code, accept }) {
         const apiKey = getEnv("LTA_DATAMALL_API_KEY");
         const headers: Record<string, string> = { AccountKey: apiKey };
         if (accept) headers.Accept = accept;
@@ -250,9 +281,7 @@ Always return only a valid tool call in JSON format without any additional text 
         while (true) {
           const params = new URLSearchParams();
           params.append("$skip", skip.toString());
-          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusServices${
-            params.toString() ? `?${params}` : ""
-          }`;
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusServices?${params}`;
           const resp = await fetch(url, { headers });
           if (!resp.ok) {
             const txt = await resp.text();
@@ -262,19 +291,51 @@ Always return only a valid tool call in JSON format without any additional text 
           }
           const body = await resp.json();
           console.log(body, `LTA bus data from get_bus_services skip=${skip}`);
-          const page = Array.isArray(body.value) ? body.value : [];
+          const page: any[] = Array.isArray(body.value) ? body.value : [];
           if (page.length === 0) break;
-          results.push(...page);
+          const filtered = page.filter(
+            (r) =>
+              (service_no && r.ServiceNo === service_no) ||
+              (origin_code && r.OriginCode === origin_code),
+          );
+          if (filtered.length) results.push(...filtered);
           skip += 500;
         }
-        return results;
+        return results.map((r: any) => ({
+          serviceNo: r.ServiceNo,
+          operator: r.Operator,
+          direction: r.Direction,
+          category: r.Category,
+          originCode: r.OriginCode,
+          destinationCode: r.DestinationCode,
+          amPeakFreq: r.AM_Peak_Freq,
+          amOffpeakFreq: r.AM_Offpeak_Freq,
+          pmPeakFreq: r.PM_Peak_Freq,
+          pmOffpeakFreq: r.PM_Offpeak_Freq,
+          loopDesc: r.LoopDesc,
+        }));
       },
     }),
 
-    get_bus_routes: tool({
-      description:
-        "Get detailed route information for all bus services in operation.",
+    get_bus_route_for_service: tool({
+      description: `Get detailed route information for a single bus service (ServiceNo).
+Response attributes:
+- serviceNo: The bus service number (e.g. '107M')
+- operator: Operator for this bus service (e.g. 'SBST')
+- direction: The direction in which the bus travels (1 or 2); loop services only have 1 direction
+- stopSequence: The i-th bus stop for this route (e.g. 28)
+- busStopCode: The unique 5-digit identifier for this physical bus stop (e.g. '01219')
+- distanceKm: Distance travelled by bus from starting location to this bus stop in kilometres (e.g. 10.3)
+- weekdayFirstBus: Scheduled arrival of first bus on weekdays (e.g. '2025')
+- weekdayLastBus: Scheduled arrival of last bus on weekdays (e.g. '2352')
+- saturdayFirstBus: Scheduled arrival of first bus on Saturdays (e.g. '1427')
+- saturdayLastBus: Scheduled arrival of last bus on Saturdays (e.g. '2349')
+- sundayFirstBus: Scheduled arrival of first bus on Sundays (e.g. '0620')
+- sundayLastBus: Scheduled arrival of last bus on Sundays (e.g. '2349')`,
       parameters: z.object({
+        service_no: z
+          .string()
+          .describe("Bus service number (ServiceNo), e.g. '107M'."),
         accept: z
           .enum(["application/json", "application/atom+xml"])
           .optional()
@@ -282,7 +343,7 @@ Always return only a valid tool call in JSON format without any additional text 
             "Response format: 'application/json' (default) or 'application/atom+xml' for XML",
           ),
       }),
-      async execute({ accept }) {
+      async execute({ service_no, accept }) {
         const apiKey = getEnv("LTA_DATAMALL_API_KEY");
         const headers: Record<string, string> = { AccountKey: apiKey };
         if (accept) headers.Accept = accept;
@@ -291,7 +352,7 @@ Always return only a valid tool call in JSON format without any additional text 
         while (true) {
           const params = new URLSearchParams();
           params.append("$skip", skip.toString());
-          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusRoutes${
+          const url = `https://datamall2.mytransport.sg/ltaodataservice/BusRoutes?${
             params.toString() ? `?${params}` : ""
           }`;
           const resp = await fetch(url, { headers });
@@ -302,13 +363,30 @@ Always return only a valid tool call in JSON format without any additional text 
             );
           }
           const body = await resp.json();
-          console.log(body, `LTA bus data from get_bus_routes skip=${skip}`);
-          const page = Array.isArray(body.value) ? body.value : [];
+          console.log(
+            body,
+            `LTA bus data from get_bus_route_for_service skip=${skip}`,
+          );
+          const page: any[] = Array.isArray(body.value) ? body.value : [];
           if (page.length === 0) break;
-          results.push(...page);
+          const matches = page.filter((r) => r.ServiceNo === service_no);
+          if (matches.length) results.push(...matches);
           skip += 500;
         }
-        return results;
+        return results.map((r: any) => ({
+          serviceNo: r.ServiceNo,
+          operator: r.Operator,
+          direction: r.Direction,
+          stopSequence: r.StopSequence,
+          busStopCode: r.BusStopCode,
+          distanceKm: r.Distance,
+          weekdayFirstBus: r.WD_FirstBus,
+          weekdayLastBus: r.WD_LastBus,
+          saturdayFirstBus: r.SAT_FirstBus,
+          saturdayLastBus: r.SAT_LastBus,
+          sundayFirstBus: r.SUN_FirstBus,
+          sundayLastBus: r.SUN_LastBus,
+        }));
       },
     }),
 

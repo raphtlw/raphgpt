@@ -101,7 +101,7 @@ export const agentExecute =
           },
         }),
       },
-      maxSteps: 5,
+      maxSteps: 10,
       abortSignal: data.ctx.session.task?.signal,
     });
 

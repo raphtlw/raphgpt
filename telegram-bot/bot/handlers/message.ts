@@ -13,7 +13,11 @@ import {
 import type { BotContext } from "bot";
 import { getConfigValue } from "bot/config";
 import { DATA_DIR, LLM_TOOLS_LIMIT, TEMP_DIR } from "bot/constants";
-import { insertMessage, pullMessageHistory } from "bot/context-history";
+import {
+  insertMessage,
+  pullMessageHistory,
+  pullMessagesByChatAndUser,
+} from "bot/context-history";
 import { retrieveUser } from "bot/helpers";
 import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
@@ -351,6 +355,8 @@ messageHandler.on(["message", "edit:text"]).filter(
       `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
     );
 
+    const messages: CoreMessage[] = [];
+
     const { object: summary } = await generateObject({
       model: openai("gpt-4o"),
       system:
@@ -376,16 +382,24 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       ],
     });
 
+    console.log(`Summary from LLM: ${inspect(summary)}`);
+
+    // Find most relevant conversations from chat-memory vector db
     const relatedTurns = await searchChatMemory(chatId, summary.query, 4);
-
     console.log(`Most relevant conversation turns: ${inspect(relatedTurns)}`);
-
-    const messages: CoreMessage[] = [];
 
     for (const turn of relatedTurns) {
       const relatedMessages = await pullMessageHistory(turn.messageIds);
       messages.push(...relatedMessages);
     }
+
+    // Get context history, limited to config value
+    const recentMessages = await pullMessagesByChatAndUser({
+      chatId,
+      userId,
+      limit: await getConfigValue(ctx.from.id, "messagehistsize"),
+    });
+    messages.push(...recentMessages);
 
     console.log(`Message history: ${inspect(messages)}`);
 
