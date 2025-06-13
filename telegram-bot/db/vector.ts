@@ -4,6 +4,7 @@ import { z } from "zod";
 export const chatMemorySchema = z.object({
   chatId: z.number(),
   messageIds: z.array(z.number()),
+  createdAt: z.coerce.date(),
 });
 export type ChatMemory = z.infer<typeof chatMemorySchema>;
 
@@ -19,5 +20,7 @@ export async function searchChatMemory(
     includeMetadata: true,
   });
 
-  return results.map((result) => chatMemorySchema.parse(result.metadata));
+  return results
+    .map((result) => chatMemorySchema.parse(result.metadata))
+    .sort((prev, next) => prev.createdAt.valueOf() - next.createdAt.valueOf());
 }

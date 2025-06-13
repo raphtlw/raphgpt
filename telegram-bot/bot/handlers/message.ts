@@ -597,7 +597,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           await vectorStore.upsert({
             id: createId(),
             data: summary.title,
-            metadata: { chatId, messageIds },
+            metadata: { chatId, messageIds, createdAt: new Date() },
           });
         }
       },

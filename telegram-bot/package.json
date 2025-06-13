@@ -9,7 +9,7 @@
     "drizzle-kit": "infisical run -- bunx --bun drizzle-kit"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.2.16",
     "@types/jsdom": "^21.1.7",
     "@types/pako": "^2.0.3",
     "@types/turndown": "^5.0.5",
@@ -18,7 +18,7 @@
     "prettier-plugin-organize-imports": "^4.1.0"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.8.3"
   },
   "dependencies": {
     "@agentic/ai-sdk": "^7.6.7",
@@ -33,7 +33,7 @@
     "@grammyjs/parse-mode": "^2.1.2",
     "@grammyjs/runner": "^2.0.3",
     "@huggingface/transformers": "^3.5.2",
-    "@libsql/client": "^0.15.8",
+    "@libsql/client": "^0.15.9",
     "@mozilla/readability": "^0.6.0",
     "@paralleldrive/cuid2": "^2.2.2",
     "@raydium-io/raydium-sdk-v2": "^0.1.139-alpha",
@@ -51,7 +51,7 @@
     "jsdom": "^26.1.0",
     "pako": "^2.1.0",
     "pdf2pic": "^3.2.0",
-    "puppeteer-core": "^24.10.0",
+    "puppeteer-core": "^24.10.1",
     "redis": "^5.5.6",
     "replicate": "^1.0.1",
     "sharp": "^0.34.2",
@@ -60,7 +60,7 @@
     "tiktoken": "^1.0.21",
     "turndown": "^7.2.0",
     "yaml": "^2.8.0",
-    "zod": "^3.25.56",
+    "zod": "^3.25.64",
     "zod-to-json-schema": "^3.24.5"
   },
   "patchedDependencies": {
