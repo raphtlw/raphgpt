@@ -32,6 +32,10 @@ services:
 
   browserless:
     image: ghcr.io/browserless/chromium
+    environment:
+      - DEBUG=-*
+    restart: always
 
   gotenberg:
     image: gotenberg/gotenberg:8
+    restart: always
