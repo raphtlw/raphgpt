@@ -1,6 +1,6 @@
 services:
   telegram-bot:
-    image: ghcr.io/raphtlw/raphgpt-telegram-bot
+    image: ghcr.io/raphtlw/raphgpt-telegram-bot:main
     build: ./telegram-bot
     develop:
       watch:
@@ -15,7 +15,7 @@ services:
     restart: always
 
   video-parser:
-    image: ghcr.io/raphtlw/raphgpt-video-parser
+    image: ghcr.io/raphtlw/raphgpt-video-parser:main
     platform: linux/amd64
     build: ./video-parser
     develop:
