@@ -25,6 +25,8 @@
     "@agentic/arxiv": "^7.6.7",
     "@agentic/calculator": "^7.6.7",
     "@agentic/e2b": "^7.6.7",
+    "@agentic/google-custom-search": "^7.6.7",
+    "@agentic/jina": "^7.6.7",
     "@agentic/mcp": "^7.6.7",
     "@agentic/weather": "^7.6.7",
     "@ai-sdk/openai": "^1.3.22",
