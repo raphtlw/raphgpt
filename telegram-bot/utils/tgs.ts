@@ -1,4 +1,4 @@
-import { browser } from "bot/browser";
+import { getBrowser } from "bot/browser";
 import { $ } from "bun";
 import fs from "fs";
 import pako from "pako";
@@ -117,6 +117,7 @@ class TGS {
         fs.mkdirSync(this.framesDir);
       }
 
+      const browser = await getBrowser();
       const page = await browser.newPage();
       await page.setViewport({ width, height });
 

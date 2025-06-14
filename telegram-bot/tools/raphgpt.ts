@@ -1,6 +1,6 @@
 import { fmt } from "@grammyjs/parse-mode";
 import { tool } from "ai";
-import { browser } from "bot/browser";
+import { getBrowser } from "bot/browser";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
 import { encoding_for_model } from "tiktoken";
@@ -63,6 +63,7 @@ export function raphgptTools(data: ToolData) {
         // get first 5 result contents
         for (let i = 0; i < 5; i++) {
           try {
+            const browser = await getBrowser();
             const page = await browser.newPage();
             await page.goto(results[i]!.link, {
               waitUntil: "domcontentloaded",
@@ -102,6 +103,7 @@ export function raphgptTools(data: ToolData) {
         url: z.string(),
       }),
       async execute({ url }) {
+        const browser = await getBrowser();
         const page = await browser.newPage();
         await page.goto(url, {
           waitUntil: "domcontentloaded",

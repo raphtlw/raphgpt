@@ -1,7 +1,9 @@
 import puppeteer from "puppeteer-core";
 
-export const browser = await puppeteer.connect({
-  browserWSEndpoint: "ws://browserless:3000",
-  acceptInsecureCerts: true,
-  defaultViewport: null,
-});
+export async function getBrowser() {
+  return await puppeteer.connect({
+    browserWSEndpoint: "ws://browserless:3000",
+    acceptInsecureCerts: true,
+    defaultViewport: null,
+  });
+}
