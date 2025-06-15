@@ -367,6 +367,7 @@ messageHandler.on(["message", "edit:text"]).filter(
         title: z.string(),
       }),
       messages: [
+        ...messages,
         {
           role: "user",
           content: [
