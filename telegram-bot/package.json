@@ -9,10 +9,13 @@
     "drizzle-kit": "infisical run -- bunx --bun drizzle-kit"
   },
   "devDependencies": {
+    "@types/archiver": "^6.0.3",
     "@types/bun": "^1.2.16",
     "@types/jsdom": "^21.1.7",
     "@types/pako": "^2.0.3",
+    "@types/papaparse": "^5.3.16",
     "@types/turndown": "^5.0.5",
+    "@types/yt-search": "^2.10.3",
     "drizzle-kit": "^0.31.1",
     "prettier": "^3.5.3",
     "prettier-plugin-organize-imports": "^4.1.0"
@@ -44,6 +47,7 @@
     "@solana/web3.js": "^1.98.2",
     "@upstash/vector": "^1.2.1",
     "ai": "^4.3.16",
+    "archiver": "^7.0.1",
     "cron": "^4.3.1",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.44.2",
@@ -53,6 +57,7 @@
     "iso-language-codes": "^2.0.0",
     "jsdom": "^26.1.0",
     "pako": "^2.1.0",
+    "papaparse": "^5.5.3",
     "pdf2pic": "^3.2.0",
     "puppeteer-core": "^24.10.1",
     "redis": "^5.5.6",
@@ -63,6 +68,8 @@
     "tiktoken": "^1.0.21",
     "turndown": "^7.2.0",
     "yaml": "^2.8.0",
+    "yt-dlp-core": "^2.4.0",
+    "yt-search": "^2.13.1",
     "zod": "^3.25.64",
     "zod-to-json-schema": "^3.24.5"
   },
@@ -70,7 +77,12 @@
     "openai-zod-to-json-schema@1.0.3": "patches/openai-zod-to-json-schema@1.0.3.patch"
   },
   "trustedDependencies": [
+    "bigint-buffer",
+    "bufferutil",
+    "esbuild",
     "onnxruntime-node",
-    "protobufjs"
+    "protobufjs",
+    "sharp",
+    "utf-8-validate"
   ]
 }

@@ -37,7 +37,6 @@ export const downloadFile = async (
     // Detect file type
     const fileBuffer = await fs.promises.readFile(localPath);
     const fileType = await fileTypeFromBuffer(new Uint8Array(fileBuffer));
-    console.log(fileType, "Document file type");
 
     // Rename file with better extension
     if (fileType) {

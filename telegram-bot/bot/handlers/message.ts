@@ -31,7 +31,6 @@ import { db } from "db";
 import { searchChatMemory } from "db/vector";
 import { Composer, InputFile } from "grammy";
 import path from "path";
-import pdf2pic from "pdf2pic";
 import type { FileOutput } from "replicate";
 import sharp from "sharp";
 import SuperJSON from "superjson";
@@ -184,99 +183,102 @@ messageHandler.on(["message", "edit:text"]).filter(
     if (ctx.msg.document) {
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
-      const file = await downloadFile(ctx);
-      ctx.session.tempFiles.push(file.localPath);
-      if (file.fileType) {
-        switch (file.fileType.ext) {
-          case "pdf": {
-            toSend.push({
-              type: "text",
-              text: "PDF file contents",
-            });
-
-            const pdfPages = await pdf2pic.fromPath(file.localPath).bulk(-1, {
-              responseType: "buffer",
-            });
-
-            for (const page of pdfPages) {
-              toSend.push({
-                type: "image",
-                image: page.buffer!,
-              });
-            }
-            break;
-          }
-          case "docx": {
-            toSend.push({
-              type: "text",
-              text: `DOCX file contents`,
-            });
-
-            const form = new FormData();
-            form.append("files", Bun.file(file.localPath));
-
-            const res = await fetch(
-              "http://gotenberg:3000/forms/libreoffice/convert",
-              {
-                method: "POST",
-                body: form,
-              },
-            );
-
-            if (!res.ok) {
-              throw new Error(
-                `Gotenberg failed with status ${res.status}: ${await res.text()}`,
-              );
-            }
-
-            const pdfPages = await pdf2pic
-              .fromBuffer(Buffer.from(await res.arrayBuffer()))
-              .bulk(-1, {
-                responseType: "buffer",
-              });
-
-            for (const page of pdfPages) {
-              const resized = await sharp(page.buffer)
-                .resize({
-                  fit: "contain",
-                  width: 512,
-                })
-                .toBuffer();
-              toSend.push({
-                type: "image",
-                image: resized,
-              });
-            }
-            break;
-          }
-          case "jpg":
-          case "jpeg":
-          case "png":
-          case "webp": {
-            toSend.push({
-              type: "image",
-              image: file.remoteUrl,
-            });
-            break;
-          }
-        }
-      } else {
-        toSend.push({
-          type: "text",
-          text: "Text file contents:",
-        });
-        toSend.push({
-          type: "text",
-          text: await Bun.file(file.localPath).text(),
-        });
-      }
-    }
-    if (ctx.msg.location) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
       toSend.push({
         type: "text",
-        text: JSON.stringify(ctx.msg.location),
+        text: `File: ${JSON.stringify(ctx.msg.document)}`,
+      });
+
+      // const file = await downloadFile(ctx);
+      // ctx.session.tempFiles.push(file.localPath);
+      // if (file.fileType) {
+      //   switch (file.fileType.ext) {
+      //     case "pdf": {
+      //       toSend.push({
+      //         type: "text",
+      //         text: "PDF file contents",
+      //       });
+
+      //       const pdfPages = await pdf2pic.fromPath(file.localPath).bulk(-1, {
+      //         responseType: "buffer",
+      //       });
+
+      //       for (const page of pdfPages) {
+      //         toSend.push({
+      //           type: "image",
+      //           image: page.buffer!,
+      //         });
+      //       }
+      //       break;
+      //     }
+      //     case "docx": {
+      //       toSend.push({
+      //         type: "text",
+      //         text: `DOCX file contents`,
+      //       });
+
+      //       const form = new FormData();
+      //       form.append("files", Bun.file(file.localPath));
+
+      //       const res = await fetch(
+      //         "http://gotenberg:3000/forms/libreoffice/convert",
+      //         {
+      //           method: "POST",
+      //           body: form,
+      //         },
+      //       );
+
+      //       if (!res.ok) {
+      //         throw new Error(
+      //           `Gotenberg failed with status ${res.status}: ${await res.text()}`,
+      //         );
+      //       }
+
+      //       const pdfPages = await pdf2pic
+      //         .fromBuffer(Buffer.from(await res.arrayBuffer()))
+      //         .bulk(-1, {
+      //           responseType: "buffer",
+      //         });
+
+      //       for (const page of pdfPages) {
+      //         const resized = await sharp(page.buffer)
+      //           .resize({
+      //             fit: "contain",
+      //             width: 512,
+      //           })
+      //           .toBuffer();
+      //         toSend.push({
+      //           type: "image",
+      //           image: resized,
+      //         });
+      //       }
+      //       break;
+      //     }
+      //     case "jpg":
+      //     case "jpeg":
+      //     case "png":
+      //     case "webp": {
+      //       toSend.push({
+      //         type: "image",
+      //         image: file.remoteUrl,
+      //       });
+      //       break;
+      //     }
+      //   }
+      // } else {
+      //   toSend.push({
+      //     type: "text",
+      //     text: "Text file contents:",
+      //   });
+      //   toSend.push({
+      //     type: "text",
+      //     text: await Bun.file(file.localPath).text(),
+      //   });
+      // }
+    }
+    if (ctx.msg.location) {
+      toSend.push({
+        type: "text",
+        text: `Location: ${JSON.stringify(ctx.msg.location)}`,
       });
     }
     if (ctx.msg.sticker) {
