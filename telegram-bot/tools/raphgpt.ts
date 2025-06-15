@@ -1,11 +1,8 @@
 import { fmt } from "@grammyjs/parse-mode";
 import { tool } from "ai";
-import { getBrowser } from "bot/browser";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
-import { encoding_for_model } from "tiktoken";
 import { getEnv } from "utils/env";
-import { convertHtmlToMarkdown } from "utils/markdown";
 import { z } from "zod";
 
 /**
@@ -16,42 +13,6 @@ import { z } from "zod";
  */
 export function raphgptTools(data: ToolData) {
   return {
-    get_link_contents: tool({
-      description: "Get contents from a webpage in Markdown format",
-      parameters: z.object({
-        url: z.string(),
-      }),
-      async execute({ url }) {
-        const browser = await getBrowser();
-        const page = await browser.newPage();
-        await page.goto(url, {
-          waitUntil: "domcontentloaded",
-        });
-        const html = await page.content();
-
-        console.log(html);
-
-        const markdown = await convertHtmlToMarkdown(html);
-
-        console.log(markdown);
-
-        await page.close();
-
-        // limit content length to fit context size for model
-        const enc = encoding_for_model("o4-mini");
-        const tok = enc.encode(markdown);
-        const lim = tok.slice(0, 4096);
-        const txt = new TextDecoder().decode(enc.decode(lim));
-        enc.free();
-
-        if (txt.length > 0) {
-          return txt;
-        } else {
-          return "Webpage content is empty!";
-        }
-      },
-    }),
-
     find_place: tool({
       description:
         "Search for a place or commodity on Google Maps and returns 5 most relevant results",
