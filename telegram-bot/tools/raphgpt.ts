@@ -70,11 +70,16 @@ export function raphgptTools(data: ToolData) {
       },
     }),
 
-    publish_mdx: tool({
-      description: "Publish a webpage with MDX content",
+    publish_raphgpt_page: tool({
+      description:
+        "Publishes a new MDX-formatted webpage with the given title to raphtlw.com via the raphgpt API, creates a 'raphgptPage', returns its URL, and sends a Telegram notification to the user.",
       parameters: z.object({
-        title: z.string().describe("Title of webpage"),
-        content: z.string(),
+        title: z.string().describe("The title of the webpage to publish"),
+        content: z
+          .string()
+          .describe(
+            "The MDX-formatted content of the webpage, including markdown and JSX components",
+          ),
       }),
       async execute({ title, content }) {
         const res = await fetch(

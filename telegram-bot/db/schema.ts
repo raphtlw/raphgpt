@@ -17,6 +17,14 @@ export const usersRelations = relations(users, ({ one }) => ({
   solanaWallet: one(solanaWallets),
 }));
 
+/**
+ * User-specific configuration, such as preferred timezone.
+ */
+export const userConfig = sqliteTable("user_config", {
+  userId: integer("user_id").primaryKey(),
+  timezone: text("timezone").notNull(),
+});
+
 export const messages = sqliteTable("messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   chatId: integer("chat_id").notNull(),
