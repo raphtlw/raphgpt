@@ -1,4 +1,5 @@
 import { openai } from "@ai-sdk/openai";
+import { TZDate } from "@date-fns/tz";
 import { fmt, i } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -445,6 +446,18 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       telegramTools(ctx),
     );
 
+    const instrRows = await db.query.systemInstructions.findMany({
+      columns: { content: true },
+    });
+    const instructions = instrRows.map((r) => r.content).join("\n");
+
+    const exampleRows = await db.query.interactionExamples.findMany({
+      columns: { userInput: true, botResponse: true },
+    });
+    const examples = exampleRows
+      .map((r) => `User: ${r.userInput}\nBot: ${r.botResponse}`)
+      .join("\n\n");
+
     const { textStream } = streamText({
       model: openai("o4-mini", {
         structuredOutputs: false,
@@ -452,18 +465,19 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       tools,
       system: await buildPrompt("system", {
         me: JSON.stringify(ctx.me),
-        date: new Date().toLocaleString(),
+        date: new TZDate(
+          new Date(),
+          (await getConfigValue(ctx.from.id, "timezone")) ?? "Asia/Singapore",
+        ).toString(),
         language: await getConfigValue(ctx.from.id, "language"),
         personality: (
-          await db.query.personality.findMany({
-            columns: {
-              content: true,
-            },
-          })
+          await db.query.personality.findMany({ columns: { content: true } })
         )
           .map((r) => r.content)
           .join("\n"),
         userName: ctx.from.username ?? ctx.from.first_name,
+        instructions,
+        examples,
       }),
       messages,
       maxSteps: 5,

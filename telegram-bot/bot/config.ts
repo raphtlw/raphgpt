@@ -1,4 +1,5 @@
-import { redis } from "connections/redis";
+import { db, tables } from "db";
+import { eq } from "drizzle-orm";
 import lang from "iso-language-codes";
 import { z } from "zod";
 
@@ -15,18 +16,26 @@ export const configSchema = z.object({
     .max(15)
     .describe("Amount of messages to keep in memory")
     .default(6),
+  timezone: z
+    .string()
+    .nullable()
+    .describe("Time zone identifier (IANA format, e.g. 'Asia/Singapore')")
+    .default(null),
 });
 
 export const getConfigValue = async <K extends keyof typeof configSchema.shape>(
   telegramUserId: number,
   key: K,
 ): Promise<z.infer<typeof configSchema>[K]> => {
-  const config = await redis.HGETALL(`config:${telegramUserId}`);
+  const configRow = await db.query.userConfig.findFirst({
+    where: eq(tables.userConfig.userId, telegramUserId),
+  });
 
-  if (!config) {
+  if (!configRow) {
     // Return the default value
     return configSchema.parse({ [key]: undefined })[key];
   }
 
-  return configSchema.parse(config)[key];
+  // Parse full row to enforce schema and defaults
+  return configSchema.parse(configRow)[key];
 };

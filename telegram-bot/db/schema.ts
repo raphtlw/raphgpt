@@ -64,6 +64,31 @@ export const personality = sqliteTable("personality", {
   content: text("content").notNull(),
 });
 
+export const userConfig = sqliteTable("user_config", {
+  userId: integer("user_id").primaryKey(),
+  language: text("language").notNull().default("en"),
+  messagehistsize: integer("message_hist_size").notNull().default(6),
+  timezone: text("timezone"),
+});
+
+export const userConfigRelations = relations(userConfig, ({ one }) => ({
+  user: one(users, {
+    fields: [userConfig.userId],
+    references: [users.userId],
+  }),
+}));
+
+export const systemInstructions = sqliteTable("system_instructions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  content: text("content").notNull(),
+});
+
+export const interactionExamples = sqliteTable("interaction_examples", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userInput: text("user_input").notNull(),
+  botResponse: text("bot_response").notNull(),
+});
+
 export const solanaWallets = sqliteTable("solana_wallets", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   owner: integer("owner_id").notNull(),

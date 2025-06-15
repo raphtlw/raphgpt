@@ -6,6 +6,7 @@ import { PRODUCTION } from "bot/constants";
 import { configHandler } from "bot/handlers/config";
 import { creditsHandler } from "bot/handlers/credits";
 import { generalHandler } from "bot/handlers/general";
+import { instructionsHandler } from "bot/handlers/instructions";
 import { messageHandler } from "bot/handlers/message";
 import { personalityHandler } from "bot/handlers/personality";
 import { requestHandler } from "bot/handlers/request";
@@ -55,6 +56,16 @@ bot.use(async (ctx, next) => {
 // ───────────────────────────────────────────────────────────────
 if (PRODUCTION) {
   try {
+    // ─── Available slash commands ─────────────────────────────────────────────
+    // /start         - Start the bot & show usage instructions
+    // /clear         - Clear your session history & memory
+    // /personality   - View & edit custom personality prompts
+    // /instructions  - Manage system instructions (admin only)
+    // /set           - Set configuration options (API key, model…)
+    // /config        - Show your current configuration settings
+    // /cancel        - Cancel the ongoing request
+    // /balance       - View your AI credits balance
+    // /topup         - Purchase additional credits
     await bot.api.setMyCommands([
       {
         command: "start",
@@ -66,8 +77,12 @@ if (PRODUCTION) {
         description: "View & edit custom personality prompts",
       },
       {
+        command: "instructions",
+        description: "Manage system instructions (admin only)",
+      },
+      {
         command: "set",
-        description: "Set configuration options (API key, model…)",
+        description: "Set configuration options (Timezone, language, model…)",
       },
       {
         command: "config",
@@ -85,6 +100,7 @@ if (PRODUCTION) {
   • Configure API keys, models & settings on the fly
   • Track & top‑up AI credits (Stripe & Solana supported)
   • Clear short‑term memory or long‑term vector history
+  • Manage system instructions via /instructions (admin only)
   • Built‑in image generation, agents & tool integrations`,
     );
 
@@ -129,6 +145,7 @@ bot.use(creditsHandler);
 bot.use(generalHandler);
 bot.use(requestHandler);
 bot.use(personalityHandler);
+bot.use(instructionsHandler);
 
 bot.use(messageHandler);
 

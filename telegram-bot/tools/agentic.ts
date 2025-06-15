@@ -10,10 +10,7 @@ const weather = new WeatherClient({
   apiKey: getEnv("WEATHER_API_KEY"),
 });
 
-const googleCustomSearch = new GoogleCustomSearchClient({
-  apiKey: getEnv("GOOGLE_SEARCH_API_KEY"),
-  cseId: getEnv("GOOGLE_SEARCH_ENGINE_ID"),
-});
+const googleCustomSearch = new GoogleCustomSearchClient();
 
 const jina = new JinaClient();
 
