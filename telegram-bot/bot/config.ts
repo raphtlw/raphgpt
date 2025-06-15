@@ -1,5 +1,4 @@
-import { db, tables } from "db";
-import { eq } from "drizzle-orm";
+import { redis } from "connections/redis";
 import lang from "iso-language-codes";
 import { z } from "zod";
 
@@ -27,15 +26,12 @@ export const getConfigValue = async <K extends keyof typeof configSchema.shape>(
   telegramUserId: number,
   key: K,
 ): Promise<z.infer<typeof configSchema>[K]> => {
-  const configRow = await db.query.userConfig.findFirst({
-    where: eq(tables.userConfig.userId, telegramUserId),
-  });
+  const config = await redis.HGETALL(`config:${telegramUserId}`);
 
-  if (!configRow) {
+  if (!config) {
     // Return the default value
     return configSchema.parse({ [key]: undefined })[key];
   }
 
-  // Parse full row to enforce schema and defaults
-  return configSchema.parse(configRow)[key];
+  return configSchema.parse(config)[key];
 };

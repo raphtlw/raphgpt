@@ -1,6 +1,7 @@
 import { b, code, fmt, u } from "@grammyjs/parse-mode";
 import type { BotContext } from "bot";
 import { configSchema } from "bot/config";
+import { redis } from "connections/redis";
 import { db, tables } from "db";
 import { eq } from "drizzle-orm";
 import { Composer } from "grammy";
@@ -41,25 +42,9 @@ ${Object.keys(configSchema.shape).join(", ")}
     return await ctx.reply("Please specify value.");
   }
 
-  const parsed = configSchema.partial().parse({ [key]: value }) as Record<
-    string,
-    unknown
-  >;
-  const configValue = parsed[key];
-  const existing = await db.query.userConfig.findFirst({
-    where: eq(tables.userConfig.userId, ctx.from.id),
-  });
-  if (existing) {
-    await db
-      .update(tables.userConfig)
-      .set({ [key]: configValue } as any)
-      .where(eq(tables.userConfig.userId, ctx.from.id));
-  } else {
-    await db.insert(tables.userConfig).values({
-      userId: ctx.from.id,
-      [key]: configValue,
-    } as any);
-  }
+  configSchema.partial().parse({ [key]: value });
+
+  await redis.HSET(`config:${ctx.from.id}`, key, value);
 
   return await ctx.reply(`Successfully set ${key} to ${value}`);
 });
@@ -67,10 +52,8 @@ ${Object.keys(configSchema.shape).join(", ")}
 configHandler.command("config", async (ctx) => {
   if (!ctx.from) throw new Error("ctx.from not found");
 
-  const row = await db.query.userConfig.findFirst({
-    where: eq(tables.userConfig.userId, ctx.from.id),
-  });
-  const result = row ?? {};
+  const result = await redis.HGETALL(`config:${ctx.from.id}`);
+
   const settingsMessage = fmt`Settings ${code}${JSON.stringify(
     result,
     undefined,
