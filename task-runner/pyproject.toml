@@ -4,4 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "boto3>=1.38.36",
+    "fastapi[all]>=0.115.12",
+    "python-telegram-bot>=22.1",
+    "redis>=6.2.0",
+    "yt-dlp>=2025.6.9",
+]

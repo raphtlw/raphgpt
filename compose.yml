@@ -30,6 +30,22 @@ services:
     env_file: .env
     restart: unless-stopped
 
+  task-runner:
+    build: ./task-runner
+    develop:
+      watch:
+        - path: ./task-runner
+          action: sync+restart
+          target: /app
+          ignore:
+            - .venv/
+        - path: ./task-runner/pyproject.toml
+          action: rebuild
+    env_file: .env
+    restart: unless-stopped
+    ports:
+      - 8080:80
+
   browserless:
     image: ghcr.io/browserless/chromium
     environment:

@@ -1,10 +1,7 @@
 import { fmt } from "@grammyjs/parse-mode";
 import { tool } from "ai";
-import { ChatAction } from "bot/running-tasks";
-import { downloadFile, telegram } from "bot/telegram";
+import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
-import { s3 } from "bun";
-import { InputFile } from "grammy";
 import { getEnv } from "utils/env";
 import { z } from "zod";
 
@@ -177,13 +174,16 @@ ${url}`;
     }),
 
     /**
-     * Reads a CSV file of tracks, searches YouTube for each track, downloads the best-match audio as MP3,
-     * packages all downloads into a zip archive, and sends it back to the user.
+     * Enqueue a background job to download songs from a CSV via the task-runner,
+     * then wait for completion and send back the resulting ZIP via Telegram.
      */
     download_songs_from_csv: tool({
       description:
-        "Download the most recently sent CSV track list, optionally limit to rows start–end (1-based, inclusive), search YouTube for each row, download the top result as MP3, zip all MP3s, and send the zip to the user.",
+        "Enqueue download_songs_from_csv job on task-runner. Pass the S3 key of an existing CSV.",
       parameters: z.object({
+        csv_s3_key: z
+          .string()
+          .describe("S3 object key of the CSV file containing the track list"),
         start: z
           .number()
           .int()
@@ -197,141 +197,40 @@ ${url}`;
           .optional()
           .describe("1-based last row index to process (inclusive)"),
       }),
-      async execute({ start, end }) {
-        const { localPath: csvPath } = await downloadFile(data.ctx);
-
-        const fs = await import("fs");
-        const path = await import("path");
-        const Papa = (await import("papaparse")).default;
-        const ytSearch = (await import("yt-search")).default;
-        const YTDlpWrap = (await import("yt-dlp-core")).default;
-        const archiver = (await import("archiver")).default;
-        const { createId } = await import("@paralleldrive/cuid2");
-        const { TEMP_DIR } = await import("bot/constants");
-
-        // prepare and ensure yt-dlp binary: download if missing
-        const binPath = path.join(TEMP_DIR, "yt-dlp");
-        let ytDlpWrap = new YTDlpWrap();
-        try {
-          await ytDlpWrap.getVersion();
-        } catch {
-          // download latest yt-dlp to TEMP_DIR
-          await YTDlpWrap.downloadFromGithub(binPath);
-          ytDlpWrap = new YTDlpWrap(binPath);
-        }
-
-        const csvText = await fs.promises.readFile(csvPath, "utf8");
-        const parsed = Papa.parse<Record<string, string>>(csvText, {
-          header: true,
-          skipEmptyLines: true,
-        });
-        if (parsed.errors.length) {
-          return `ERROR: CSV parse failed: ${parsed.errors
-            .map((e) => e.message)
-            .join(", ")}`;
-        }
-        const allRows = parsed.data;
-        const total = allRows.length;
-        let from = start != null ? start - 1 : 0;
-        let to = end != null ? end - 1 : total - 1;
-        if (from < 0) from = 0;
-        if (to >= total) to = total - 1;
-        if (from > to) {
-          return `ERROR: invalid range [${start ?? 1}, ${end ?? total}]`;
-        }
-        const rows = allRows.slice(from, to + 1);
-        const downloaded: string[] = [];
-        const failed: string[] = [];
-
-        for (const row of rows) {
-          const title = (row["Track Name"] || row["track name"] || "").trim();
-          const artist = (
-            row["Artist Name(s)"] ||
-            row["artist name(s)"] ||
-            ""
-          ).trim();
-          if (!title) {
-            failed.push("<unknown title>");
-            continue;
-          }
-          const query = `${title} ${artist}`.trim();
-          console.log("Searching for", query);
-
-          let video;
-          try {
-            const results = await ytSearch(query);
-            console.log("Result from ytSearch", results);
-            video = results.videos?.[0];
-          } catch (err: any) {
-            failed.push(query);
-            continue;
-          }
-          if (!video || !video.url) {
-            failed.push(query);
-            continue;
-          }
-
-          const cookies = s3.file("yt-dlp/raphtlw_cookies.txt");
-          const cookiesPath = path.join(TEMP_DIR, "cookies.txt");
-          await Bun.write(cookiesPath, cookies);
-
-          const safeName = `${title} - ${artist}`.replace(/[\\/:*?"<>|]/g, "_");
-          const mp3Path = path.join(TEMP_DIR, `${safeName}.mp3`);
-          try {
-            await ytDlpWrap.execPromise([
-              video.url,
-              "-x",
-              "--audio-format",
-              "mp3",
-              "-o",
-              mp3Path,
-              "--cookies",
-              cookiesPath,
-              "--embed-metadata",
-              "--embed-subs",
-            ]);
-            downloaded.push(mp3Path);
-          } catch (err: any) {
-            failed.push(query);
-            console.error("Error downloading via yt-dlp-core:", err);
-          }
-        }
-
-        if (!downloaded.length) {
-          return `ERROR: No tracks could be downloaded.`;
-        }
-
-        data.ctx.session.chatAction = new ChatAction(
-          data.ctx.chatId!,
-          "typing",
-        );
-
-        const zipName = `songs_${createId()}.zip`;
-        const zipPath = path.join(TEMP_DIR, zipName);
-        await new Promise<void>((resolve, reject) => {
-          const output = fs.createWriteStream(zipPath);
-          const archive = archiver("zip", { zlib: { level: 9 } });
-          output.on("close", resolve);
-          archive.on("error", reject);
-          archive.pipe(output);
-          for (const mp3 of downloaded) {
-            archive.file(mp3, { name: path.basename(mp3) });
-          }
-          archive.finalize();
-        });
-
-        await telegram.sendDocument(data.ctx.chatId!, new InputFile(zipPath), {
-          caption:
-            `Downloaded ${downloaded.length} tracks.` +
-            (failed.length
-              ? ` Skipped ${failed.length}: ${failed.join(", ")}`
-              : ""),
-          reply_parameters: {
-            message_id: data.ctx.msgId!,
-            allow_sending_without_reply: true,
+      async execute({ csv_s3_key, start, end }) {
+        const ctx = data.ctx;
+        // Enqueue on task-runner using the provided CSV S3 key
+        const resp = await fetch(
+          `http://task-runner/tasks/download_songs_from_csv`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              payload: {
+                csv_s3_key,
+                start,
+                end,
+                chat_id: ctx.chatId,
+                reply_to_message_id: ctx.msgId,
+              },
+            }),
           },
-        });
-        return zipPath;
+        );
+        if (!resp.ok) {
+          throw new Error(`Failed to enqueue task: ${resp.statusText}`);
+        }
+        const { job_id: jobId } = (await resp.json()) as { job_id: string };
+        await telegram.sendMessage(
+          ctx.chatId!,
+          `🎶 Task queued (ID: ${jobId}). I’ll send the ZIP here when it’s ready.`,
+          {
+            reply_parameters: {
+              message_id: ctx.msgId!,
+              allow_sending_without_reply: true,
+            },
+          },
+        );
+        return `Queued download job ${jobId}`;
       },
     }),
   };

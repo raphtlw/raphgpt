@@ -1,6 +1,5 @@
-def main():
-    print("Hello from task-runner!")
+"""
+Entrypoint for FastAPI Task Runner.
+"""
 
-
-if __name__ == "__main__":
-    main()
+from task_runner.main import app  # expose FastAPI 'app' for CLI server

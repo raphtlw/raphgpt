@@ -40,7 +40,7 @@ export const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
   client: { apiRoot: getEnv("TELEGRAM_API_URL") },
 });
 
-bot.use(session());
+bot.use(session({ initial: () => ({}) }));
 bot.use(conversations());
 bot.use(async (ctx, next) => {
   console.log("Update Received:", { update: ctx.update });
@@ -130,7 +130,7 @@ bot.use(async (ctx, next) => {
       ctx.session.tempDir,
     );
 
-    await fs.rm(ctx.session.tempDir, { force: true });
+    await fs.rm(ctx.session.tempDir, { recursive: true, force: true });
   }
 });
 
@@ -155,10 +155,10 @@ bot.use(async (ctx, next) => {
 });
 
 bot.catch(async ({ error, ctx, message }) => {
-  if (ctx.session.chatAction) {
+  if (ctx && ctx.session && ctx.session.chatAction) {
     ctx.session.chatAction.stop();
   }
-  if (ctx.session.task) {
+  if (ctx && ctx.session && ctx.session.task) {
     ctx.session.task.abort();
   }
   if (ctx.chatId) {
@@ -175,5 +175,5 @@ bot.catch(async ({ error, ctx, message }) => {
   } else {
     console.error(`Unknown error: ${inspect(error)}`);
   }
-  await ctx.reply(`Error: ${message}`);
+  await ctx.reply(message);
 });
