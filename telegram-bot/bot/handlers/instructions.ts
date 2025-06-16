@@ -8,18 +8,13 @@ import { z } from "zod";
 
 export const instructionsHandler = new Composer<BotContext>();
 
-// Only the bot owner may manage system instructions
-instructionsHandler.use((ctx, next) => {
-  const ownerId = getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
-  if (ctx.from?.id !== ownerId) {
-    return ctx.reply("❌ You are not authorized to use this command.");
-  }
-  return next();
-});
-
 // Show instructions menu
 instructionsHandler.command("instructions", async (ctx) => {
   if (!ctx.from) throw new Error("ctx.from not found");
+
+  if (ctx.from.id !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())) {
+    return ctx.reply("❌ You are not authorized to use this command.");
+  }
 
   const rows = await db.query.systemInstructions.findMany({
     columns: { id: true, content: true },
@@ -48,6 +43,10 @@ instructionsHandler.command("instructions", async (ctx) => {
 // Paginate through instructions
 const instrMenu = async (ctx: BotContext, page: number) => {
   if (!ctx.from) throw new Error("ctx.from not found");
+
+  if (ctx.from.id !== getEnv("TELEGRAM_BOT_OWNER", z.coerce.number())) {
+    return ctx.reply("❌ You are not authorized to use this command.");
+  }
 
   const rows = await db.query.systemInstructions.findMany({
     columns: { id: true, content: true },
