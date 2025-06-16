@@ -22,7 +22,7 @@ import {
 import { retrieveUser } from "bot/helpers";
 import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
-import { $, inspect } from "bun";
+import { $, inspect, s3 } from "bun";
 import { redis } from "connections/redis";
 import { replicate } from "connections/replicate";
 import { vectorStore } from "connections/vector";
@@ -120,10 +120,8 @@ messageHandler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
-      ctx.session.tempFiles.push(file.localPath);
       const inputFileId = createId();
       const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
-      ctx.session.tempFiles.push(audioFilePath);
       await $`ffmpeg -i ${file.localPath} ${audioFilePath}`;
 
       const transcript = (await replicate.run(
@@ -146,7 +144,6 @@ messageHandler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
-      ctx.session.tempFiles.push(file.localPath);
 
       const { transcript, frames, summary } = await analyzeVideo(
         Bun.file(file.localPath),
@@ -170,7 +167,6 @@ messageHandler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
-      ctx.session.tempFiles.push(file.localPath);
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
         .toBuffer();
@@ -181,10 +177,24 @@ messageHandler.on(["message", "edit:text"]).filter(
       });
     }
     if (ctx.msg.document) {
-      toSend.push({
-        type: "text",
-        text: `File: ${JSON.stringify(ctx.msg.document)}`,
-      });
+      const file = await downloadFile(ctx);
+      const key = `documents/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
+      await s3.file(key).write(Bun.file(file.localPath));
+
+      toSend.push(
+        {
+          type: "text",
+          text: `File uploaded to S3 path ${key}`,
+        },
+        {
+          type: "text",
+          text: `File size in bytes: ${ctx.msg.document.file_size}`,
+        },
+        {
+          type: "text",
+          text: `Mime type: ${ctx.msg.document.mime_type}`,
+        },
+      );
 
       // const file = await downloadFile(ctx);
       // ctx.session.tempFiles.push(file.localPath);
@@ -283,14 +293,12 @@ messageHandler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
-      ctx.session.tempFiles.push(file.localPath);
 
       let images: DataContent[];
       if (ctx.msg.sticker.is_animated) {
         const mp4FilePath = await new TGS(file.localPath).convertToMp4(
           path.join(TEMP_DIR, `${createId()}.mp4`),
         );
-        ctx.session.tempFiles.push(mp4FilePath);
         const { transcript, frames, summary } = await analyzeVideo(
           Bun.file(mp4FilePath),
           "en",
@@ -298,7 +306,6 @@ messageHandler.on(["message", "edit:text"]).filter(
         images = frames;
       } else if (file.fileType?.mime.startsWith("video")) {
         const stickerPath = path.join(TEMP_DIR, `sticker_${createId()}.mp4`);
-        ctx.session.tempFiles.push(stickerPath);
         await $`ffmpeg -i ${file.localPath} ${stickerPath}`;
         const { transcript, frames, summary } = await analyzeVideo(
           Bun.file(stickerPath),
@@ -504,10 +511,8 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           })) as FileOutput;
 
           const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
-          ctx.session.tempFiles.push(rawPath);
           await Bun.write(rawPath, await audioFile.blob());
           const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
-          ctx.session.tempFiles.push(oggPath);
           await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
 
           await telegram.sendVoice(ctx.chatId, new InputFile(oggPath), {

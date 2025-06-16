@@ -199,7 +199,6 @@ ${url}`;
       }),
       async execute({ start, end }) {
         const { localPath: csvPath } = await downloadFile(data.ctx);
-        data.ctx.session.tempFiles.push(csvPath);
 
         const fs = await import("fs");
         const path = await import("path");
@@ -275,7 +274,6 @@ ${url}`;
           const cookies = s3.file("yt-dlp/raphtlw_cookies.txt");
           const cookiesPath = path.join(TEMP_DIR, "cookies.txt");
           await Bun.write(cookiesPath, cookies);
-          data.ctx.session.tempFiles.push(cookiesPath);
 
           const safeName = `${title} - ${artist}`.replace(/[\\/:*?"<>|]/g, "_");
           const mp3Path = path.join(TEMP_DIR, `${safeName}.mp3`);
@@ -292,7 +290,6 @@ ${url}`;
               "--embed-metadata",
               "--embed-subs",
             ]);
-            data.ctx.session.tempFiles.push(mp3Path);
             downloaded.push(mp3Path);
           } catch (err: any) {
             failed.push(query);
@@ -322,7 +319,6 @@ ${url}`;
           }
           archive.finalize();
         });
-        data.ctx.session.tempFiles.push(zipPath);
 
         await telegram.sendDocument(data.ctx.chatId!, new InputFile(zipPath), {
           caption:

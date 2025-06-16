@@ -1,8 +1,7 @@
-import { createId } from "@paralleldrive/cuid2";
-import { TEMP_DIR } from "bot/constants";
+import type { BotContext } from "bot";
 import { fileTypeFromBuffer, type FileTypeResult } from "file-type";
 import fs from "fs";
-import { Api, Context } from "grammy";
+import { Api } from "grammy";
 import path from "path";
 import { getEnv } from "utils/env";
 
@@ -15,7 +14,7 @@ export const telegram = new Api(getEnv("TELEGRAM_BOT_TOKEN"), {
  * at the environment variable TELEGRAM_API_URL to TEMP_DIR.
  */
 export const downloadFile = async (
-  ctx: Context,
+  ctx: BotContext,
 ): Promise<{
   localPath: string;
   remoteUrl: string;
@@ -24,6 +23,9 @@ export const downloadFile = async (
   if (ctx.has(":file")) {
     const telegramFile = await ctx.getFile();
 
+    if (!telegramFile.file_path)
+      throw new Error("Cannot call downloadFile when there is no file path!");
+
     // Construct file URL
     const fileUrl = `${getEnv("TELEGRAM_API_URL")}/file/bot${getEnv(
       "TELEGRAM_BOT_TOKEN",
@@ -31,7 +33,10 @@ export const downloadFile = async (
 
     // Download file
     const resp = await fetch(fileUrl);
-    const localPath = path.join(TEMP_DIR, createId());
+    const localPath = path.join(
+      ctx.session.tempDir,
+      path.basename(telegramFile.file_path),
+    );
     await Bun.write(localPath, resp);
 
     // Detect file type

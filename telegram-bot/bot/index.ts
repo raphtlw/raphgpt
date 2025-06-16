@@ -2,7 +2,8 @@ import {
   conversations,
   type ConversationFlavor,
 } from "@grammyjs/conversations";
-import { PRODUCTION } from "bot/constants";
+import { createId } from "@paralleldrive/cuid2";
+import { PRODUCTION, TEMP_DIR } from "bot/constants";
 import { configHandler } from "bot/handlers/config";
 import { creditsHandler } from "bot/handlers/credits";
 import { generalHandler } from "bot/handlers/general";
@@ -21,11 +22,12 @@ import {
   type SessionFlavor,
 } from "grammy";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { getEnv } from "utils/env";
 
 export type SessionData = {
+  tempDir: string;
   task: AbortController | null;
-  tempFiles: string[];
   topupAmountDollars: number | null;
   pendingPaymentInvoicePayload: string | null;
   chatAction: ChatAction | null;
@@ -38,13 +40,7 @@ export const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
   client: { apiRoot: getEnv("TELEGRAM_API_URL") },
 });
 
-bot.use(
-  session({
-    initial: () => ({
-      tempFiles: [] as string[],
-    }),
-  }),
-);
+bot.use(session());
 bot.use(conversations());
 bot.use(async (ctx, next) => {
   console.log("Update Received:", { update: ctx.update });
@@ -114,6 +110,12 @@ if (PRODUCTION) {
   }
 }
 
+bot.use(async (ctx, next) => {
+  ctx.session.tempDir = path.join(TEMP_DIR, createId());
+  await fs.mkdir(ctx.session.tempDir, { recursive: true });
+  await next();
+});
+
 // Post-handler cleanup
 bot.use(async (ctx, next) => {
   try {
@@ -124,19 +126,11 @@ bot.use(async (ctx, next) => {
     clearRunningChatActions(ctx.chatId!);
 
     console.log(
-      `Temporary files after message handler: ${inspect(ctx.session.tempFiles)}`,
+      "Temporary directory after message handler:",
+      ctx.session.tempDir,
     );
 
-    if (ctx.session.tempFiles?.length > 0) {
-      for (const filePath of ctx.session.tempFiles) {
-        try {
-          await fs.rm(filePath, { force: true });
-        } catch (e) {
-          console.error({ e, filePath }, "Error cleaning up temporary file");
-        }
-      }
-      ctx.session.tempFiles = [];
-    }
+    await fs.rm(ctx.session.tempDir, { force: true });
   }
 });
 
