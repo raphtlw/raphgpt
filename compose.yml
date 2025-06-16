@@ -30,11 +30,6 @@ services:
     env_file: .env
     restart: unless-stopped
 
-  rabbitmq:
-    image: rabbitmq
-    env_file: .env
-    restart: unless-stopped
-
   browserless:
     image: ghcr.io/browserless/chromium
     environment:
