@@ -14,8 +14,48 @@ import { z } from "zod";
  * before being included in LLM calls.
  */
 export function raphgptTools(data: ToolData) {
-  // Tools specific to raphGPT, augment with domain-specific functionality
   return {
+    convert_timezone: tool({
+      description:
+        "Convert a date/time string from one timezone to another. Defaults to current time and configured timezone if not provided.",
+      parameters: z.object({
+        to_timezone: z
+          .string()
+          .describe(
+            "Destination timezone in IANA format, e.g. 'Europe/Bratislava'",
+          ),
+        from_timezone: z
+          .string()
+          .optional()
+          .describe(
+            "Source timezone in IANA format, e.g. 'Asia/Singapore' (defaults to user's configured timezone)",
+          ),
+        datetime: z
+          .string()
+          .optional()
+          .describe(
+            "Date/time in ISO 8601 format to convert (defaults to now)",
+          ),
+      }),
+      async execute({ to_timezone, from_timezone, datetime }) {
+        const date = datetime ? new Date(datetime) : new Date();
+        const options: Intl.DateTimeFormatOptions = {
+          timeZone: to_timezone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        };
+        const formatted = new Intl.DateTimeFormat("sv-SE", options).format(
+          date,
+        );
+        return `${formatted} (${to_timezone})`;
+      },
+    }),
+
     find_place: tool({
       description:
         "Search for a place or commodity on Google Maps and returns 5 most relevant results",

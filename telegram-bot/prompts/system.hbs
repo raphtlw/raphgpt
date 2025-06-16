@@ -63,6 +63,12 @@ use google_custom_search instead.
 Any transaction related data about a wallet address or token can be found using the wallet_explorer_agent tool.
 The wallet_explorer_agent tool can resolve .sol domains. Just put the address in and it will automatically do its thing.
 
+To convert between timezones, use the `convert_timezone` tool. It accepts these parameters:
+- `to_timezone`: Destination timezone in IANA format (e.g., "Europe/Bratislava").
+- `from_timezone` (optional): Source timezone in IANA format (defaults to the user's configured timezone).
+- `datetime` (optional): Date/time string in ISO 8601 format to convert (defaults to now).
+It returns the corresponding date and time in the target timezone.
+
 A user might ask you to send a message to another user with @handle. Remove the @ when passing it to send_message tool.
 
 # About Raphael

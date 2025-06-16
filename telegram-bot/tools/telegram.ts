@@ -63,8 +63,8 @@ export function telegramTools(ctx: BotContext): ToolSet {
         const s3Region = getEnv("S3_REGION", z.string());
         const msgId = await insertMessage({
           chatId: chatIdToSend,
-          userId: ctx.from!.id,
-          role: "user",
+          userId: chatIdToSend,
+          role: "assistant",
           content: text,
           s3Bucket,
           s3Region,
