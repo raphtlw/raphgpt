@@ -6,12 +6,11 @@ import { Composer, InlineKeyboard } from "grammy";
 import { getEnv } from "utils/env";
 import { z } from "zod";
 
-const ownerId = getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
-
 export const instructionsHandler = new Composer<BotContext>();
 
 // Only the bot owner may manage system instructions
 instructionsHandler.use((ctx, next) => {
+  const ownerId = getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
   if (ctx.from?.id !== ownerId) {
     return ctx.reply("❌ You are not authorized to use this command.");
   }
