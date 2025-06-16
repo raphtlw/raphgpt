@@ -1,7 +1,10 @@
+import { createId } from "@paralleldrive/cuid2";
 import { tool, type ToolSet } from "ai";
 import { type BotContext } from "bot";
+import { insertMessage } from "bot/context-history";
 import { telegram } from "bot/telegram";
 import { redis } from "connections/redis";
+import { vectorStore } from "connections/vector";
 import { db, tables } from "db";
 import { eq, or } from "drizzle-orm";
 import { getEnv } from "utils/env";
@@ -55,6 +58,27 @@ export function telegramTools(ctx: BotContext): ToolSet {
             allow_sending_without_reply: true,
           },
         });
+
+        const s3Bucket = getEnv("S3_BUCKET", z.string());
+        const s3Region = getEnv("S3_REGION", z.string());
+        const msgId = await insertMessage({
+          chatId: chatIdToSend,
+          userId: ctx.from!.id,
+          role: "user",
+          content: text,
+          s3Bucket,
+          s3Region,
+        });
+        await vectorStore.upsert({
+          id: createId(),
+          data: text,
+          metadata: {
+            chatId: chatIdToSend,
+            messageIds: [msgId],
+            createdAt: new Date(),
+          },
+        });
+
         return `Message sent to ${chatIdToSend}`;
       },
     }),
