@@ -3,6 +3,7 @@ import { tool } from "ai";
 import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
+import { s3 } from "bun";
 import { InputFile } from "grammy";
 import { getEnv } from "utils/env";
 import { z } from "zod";
@@ -271,6 +272,11 @@ ${url}`;
             continue;
           }
 
+          const cookies = s3.file("yt-dlp/raphtlw_cookies.txt");
+          const cookiesPath = path.join(TEMP_DIR, "cookies.txt");
+          await Bun.write(cookiesPath, cookies);
+          data.ctx.session.tempFiles.push(cookiesPath);
+
           const safeName = `${title} - ${artist}`.replace(/[\\/:*?"<>|]/g, "_");
           const mp3Path = path.join(TEMP_DIR, `${safeName}.mp3`);
           try {
@@ -281,6 +287,10 @@ ${url}`;
               "mp3",
               "-o",
               mp3Path,
+              "--cookies",
+              cookiesPath,
+              "--embed-metadata",
+              "--embed-subs",
             ]);
             data.ctx.session.tempFiles.push(mp3Path);
             downloaded.push(mp3Path);

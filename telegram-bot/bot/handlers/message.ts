@@ -181,8 +181,6 @@ messageHandler.on(["message", "edit:text"]).filter(
       });
     }
     if (ctx.msg.document) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
       toSend.push({
         type: "text",
         text: `File: ${JSON.stringify(ctx.msg.document)}`,
