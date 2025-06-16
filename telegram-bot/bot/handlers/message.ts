@@ -19,7 +19,6 @@ import {
   pullMessageHistory,
   pullMessagesByChatAndUser,
 } from "bot/context-history";
-import { retrieveUser } from "bot/helpers";
 import { ChatAction } from "bot/running-tasks";
 import { downloadFile, telegram } from "bot/telegram";
 import { $, inspect, s3 } from "bun";
@@ -88,7 +87,7 @@ messageHandler.on(["message", "edit:text"]).filter(
 
     ctx.session.task = new AbortController();
 
-    const user = await retrieveUser(ctx);
+    // const user = await retrieveUser(ctx);
 
     // // Check if user has enough free messages
     // // Check if user has enough credits
@@ -363,26 +362,32 @@ messageHandler.on(["message", "edit:text"]).filter(
       `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
     );
 
-    const messages: CoreMessage[] = [];
+    // Get context history, limited to config value
+    const recentMessages = await pullMessagesByChatAndUser({
+      chatId,
+      userId,
+      limit: await getConfigValue(ctx.from.id, "messagehistsize"),
+    });
+
+    // Log context history but don't push it yet.
+    console.log(`Recent messages: ${inspect(recentMessages)}`);
 
     const { object: summary } = await generateObject({
       model: openai("gpt-4o"),
-      system:
-        "You are an assistant summarizing multimodal content into search-friendly text.",
+      system: `You are an assistant summarizing multimodal content into search-friendly text.
+Given the following content extracted from a user's message, summarize it in a single sentence for indexing and storage.`,
       schema: z.object({
         query: z.string(),
         title: z.string(),
       }),
       messages: [
-        ...messages,
+        ...recentMessages,
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: `You are an assistant helping index messages for semantic search.
-Given the following content extracted from a user's message, summarize it in a single sentence for indexing and storage.
-Query should be what you would use to search a RAG db for related messages.
+              text: `Return the query and the title. Query should be what you would use to search a RAG db for related messages.
 Title should be what this set of messages would be stored as in the RAG db.`,
             },
             ...toSend,
@@ -397,21 +402,18 @@ Title should be what this set of messages would be stored as in the RAG db.`,
     const relatedTurns = await searchChatMemory(chatId, summary.query, 4);
     console.log(`Most relevant conversation turns: ${inspect(relatedTurns)}`);
 
+    const messages: CoreMessage[] = [];
+
+    // Append relevant conversation turns
     for (const turn of relatedTurns) {
       const relatedMessages = await pullMessageHistory(turn.messageIds);
       messages.push(...relatedMessages);
     }
 
-    // Get context history, limited to config value
-    const recentMessages = await pullMessagesByChatAndUser({
-      chatId,
-      userId,
-      limit: await getConfigValue(ctx.from.id, "messagehistsize"),
-    });
+    // Context history should come after relevant conversations
     messages.push(...recentMessages);
 
-    console.log(`Message history: ${inspect(messages)}`);
-
+    // Remind the model what its main task is
     messages.push({
       role: "system",
       content: remindingSystemPrompt.join("\n"),

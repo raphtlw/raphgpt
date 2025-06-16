@@ -184,6 +184,11 @@ ${url}`;
         csv_s3_key: z
           .string()
           .describe("S3 object key of the CSV file containing the track list"),
+        cookies_s3_key: z
+          .string()
+          .describe(
+            "S3 object key of the cookies.txt file to use to authenticate to YouTube",
+          ),
         start: z
           .number()
           .int()
@@ -196,8 +201,18 @@ ${url}`;
           .min(1)
           .optional()
           .describe("1-based last row index to process (inclusive)"),
+        embed_thumbnail: z
+          .boolean()
+          .optional()
+          .describe("Whether to embed thumbnail in album cover"),
       }),
-      async execute({ csv_s3_key, start, end }) {
+      async execute({
+        csv_s3_key,
+        cookies_s3_key,
+        start,
+        end,
+        embed_thumbnail,
+      }) {
         const ctx = data.ctx;
         // Enqueue on task-runner using the provided CSV S3 key
         const resp = await fetch(
@@ -208,10 +223,12 @@ ${url}`;
             body: JSON.stringify({
               payload: {
                 csv_s3_key,
+                cookies_s3_key,
                 start,
                 end,
                 chat_id: ctx.chatId,
                 reply_to_message_id: ctx.msgId,
+                embed_thumbnail,
               },
             }),
           },

@@ -19,7 +19,6 @@ S3_BUCKET = os.environ["S3_BUCKET"]
 S3_REGION = os.environ["S3_REGION"]
 S3_ACCESS_KEY_ID = os.environ["S3_ACCESS_KEY_ID"]
 S3_SECRET_ACCESS_KEY = os.environ["S3_SECRET_ACCESS_KEY"]
-COOKIES_S3_KEY = os.environ.get("YTDLP_COOKIES_S3_KEY", "yt-dlp/raphtlw_cookies.txt")
 
 # Initialize S3 client using explicit S3_* environment variables
 s3 = boto3.client(
@@ -56,9 +55,11 @@ def task(name: str):
 async def download_songs_from_csv(
     chat_id: int,
     csv_s3_key: str,
+    cookies_s3_key: str,
     start: int | None = None,
     end: int | None = None,
     reply_to_message_id: int | None = None,
+    embed_thumbnail: bool = False,
 ) -> None:
     """
     Downloads tracks listed in a CSV (S3), zips MP3s, uploads ZIP to S3,
@@ -67,6 +68,7 @@ async def download_songs_from_csv(
     Parameters:
     - chat_id: Telegram chat ID to send the ZIP to
     - csv_s3_key: S3 key of the CSV file in S3 bucket
+    - cookies_s3_key: S3 key of the cookies.txt file in S3 bucket
     - start: 1-based first row index (inclusive, optional)
     - end: 1-based last row index (inclusive, optional)
     - reply_to_message_id: message to reply to in Telegram (optional)
@@ -81,6 +83,9 @@ async def download_songs_from_csv(
     if not csv_s3_key:
         logger.error("No csv_s3_key provided")
         raise ValueError("csv_s3_key must be provided")
+    if not cookies_s3_key:
+        logger.error("No cookies_s3_key provided")
+        raise ValueError("cookies_s3_key must be provided")
 
     # Fetch CSV from S3
     logger.debug("Fetching CSV from S3: bucket=%s key=%s", S3_BUCKET, csv_s3_key)
@@ -89,7 +94,7 @@ async def download_songs_from_csv(
     except NoCredentialsError:
         logger.error("AWS credentials not found for fetching CSV")
         raise RuntimeError(
-            "AWS credentials missing: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+            "AWS credentials missing: set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY"
         )
     csv_text = (await asyncio.to_thread(obj["Body"].read)).decode("utf-8")
     rows = list(csv.DictReader(csv_text.splitlines()))
@@ -114,7 +119,7 @@ async def download_songs_from_csv(
 
     # Fetch cookies file from S3
     cook_obj = await asyncio.to_thread(
-        s3.get_object, Bucket=S3_BUCKET, Key=COOKIES_S3_KEY
+        s3.get_object, Bucket=S3_BUCKET, Key=cookies_s3_key
     )
     cookies_text = (await asyncio.to_thread(cook_obj["Body"].read)).decode("utf-8")
     cookies_path = os.path.join(temp_dir, "cookies.txt")
@@ -160,7 +165,7 @@ async def download_songs_from_csv(
                 {"key": "FFmpegMetadata"},
                 {"key": "EmbedThumbnail"},
             ],
-            "writethumbnail": True,
+            "writethumbnail": embed_thumbnail,
             "cookiefile": cookies_path,
             "outtmpl": outtmpl,
         }
