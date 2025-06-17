@@ -493,6 +493,15 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       messages,
       maxSteps: 5,
       async onFinish(result) {
+        console.log(`Model finished with ${result.finishReason}`);
+
+        if (result.finishReason === "tool-calls") {
+          console.error(
+            `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
+          );
+          return;
+        }
+
         if (ctx.msg.audio || ctx.msg.voice) {
           ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
           const audioFile = (await replicate.run("minimax/speech-02-turbo", {
@@ -528,15 +537,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         // Remove all pending requests
         await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
         ctx.session.task = null;
-
-        console.log(`Model finished with ${result.finishReason}`);
-
-        if (result.finishReason === "tool-calls") {
-          console.error(
-            `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
-          );
-          return;
-        }
 
         {
           const s3Bucket = getEnv("S3_BUCKET", z.string());
