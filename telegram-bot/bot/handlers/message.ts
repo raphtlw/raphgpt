@@ -4,11 +4,9 @@ import { fmt, i } from "@grammyjs/parse-mode";
 import { createId } from "@paralleldrive/cuid2";
 import {
   generateObject,
-  generateText,
   streamText,
   type CoreMessage,
   type DataContent,
-  type ImagePart,
   type UserContent,
 } from "ai";
 import type { BotContext } from "bot";
@@ -195,6 +193,14 @@ messageHandler.on(["message", "edit:text"]).filter(
         },
       );
 
+      if (!file.fileType) {
+        const charsToRead = 10;
+        toSend.push({
+          type: "text",
+          text: `First ${charsToRead} characters: ${(await Bun.file(file.localPath).text()).slice(0, charsToRead)}`,
+        });
+      }
+
       // const file = await downloadFile(ctx);
       // ctx.session.tempFiles.push(file.localPath);
       // if (file.fileType) {
@@ -318,36 +324,16 @@ messageHandler.on(["message", "edit:text"]).filter(
         images = [stickerBuffer];
       }
 
-      const { text, usage } = await generateText({
-        model: openai("gpt-4o"),
-        system:
-          "You're a helpful AI assistant that imitates API endpoints for web server that returns info about ANY sticker on Telegram.",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `The user has sent a Telegram sticker: ${JSON.stringify(
-                  ctx.msg.sticker,
-                )}. Describe everything about it most accurately for another LLM to understand and interpret, and add references to pop culture or things it might look like.`,
-              },
-              ...(images.map((image) => ({
-                type: "image",
-                image,
-              })) as ImagePart[]),
-            ],
-          },
-        ],
-      });
-      // if (userExceedsFreeMessages && !userIsOwner) {
-      //   await deductCredits(ctx, usage);
-      // }
-
       toSend.push({
         type: "text",
-        text: `Telegram sticker contents: ${text}`,
+        text: `Telegram sticker: ${JSON.stringify(ctx.msg.sticker)}`,
       });
+      toSend.push(
+        ...images.map((img) => ({
+          type: "image" as const,
+          image: img,
+        })),
+      );
     }
     if (ctx.msg.caption) {
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");

@@ -1,5 +1,7 @@
+import { TZDate } from "@date-fns/tz";
 import { fmt } from "@grammyjs/parse-mode";
 import { tool } from "ai";
+import { getConfigValue } from "bot/config";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
 import { getEnv } from "utils/env";
@@ -36,21 +38,20 @@ export function raphgptTools(data: ToolData) {
           ),
       }),
       async execute({ to_timezone, from_timezone, datetime }) {
-        const date = datetime ? new Date(datetime) : new Date();
-        const options: Intl.DateTimeFormatOptions = {
-          timeZone: to_timezone,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        };
-        const formatted = new Intl.DateTimeFormat("sv-SE", options).format(
-          date,
-        );
-        return `${formatted} (${to_timezone})`;
+        const user = data.ctx.from;
+        if (!user) throw new Error("ctx.from not found");
+        const userTz = await getConfigValue(user.id, "timezone");
+        const tzFrom = from_timezone ?? userTz ?? undefined;
+
+        let src: TZDate;
+        if (datetime) {
+          src = tzFrom ? new TZDate(datetime, tzFrom) : new TZDate(datetime);
+        } else {
+          src = tzFrom ? TZDate.tz(tzFrom) : new TZDate();
+        }
+
+        const dst = new TZDate(src.getTime(), to_timezone);
+        return dst.toString();
       },
     }),
 
