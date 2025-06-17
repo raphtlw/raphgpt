@@ -11,12 +11,15 @@ RUN apt-get update \
       libxext6 \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy files from app into container
-COPY . /app
+# Copy dependencies only
+COPY pyproject.toml uv.lock /app/
 
 # Install dependencies
 WORKDIR /app
 RUN uv sync --frozen --no-cache
+
+# Add source code
+COPY . .
 
 # Run application
 CMD [ "/app/.venv/bin/fastapi", "run", "main.py", "--port", "80", "--host", "0.0.0.0" ]

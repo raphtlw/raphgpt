@@ -1,5 +1,5 @@
 {
-  "include": ["task_runner"],
+  "include": ["app"],
   "pythonVersion": "3.12",
   "reportMissingImports": false
 }

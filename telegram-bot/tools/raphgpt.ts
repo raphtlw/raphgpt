@@ -175,72 +175,38 @@ ${url}`;
     }),
 
     /**
-     * Enqueue a background job to download songs from a CSV via the task-runner,
+     * Enqueue a background job to download songs from Spotify via the task-runner,
      * then wait for completion and send back the resulting ZIP via Telegram.
      */
-    download_songs_from_csv: tool({
+    download_songs_from_spotify: tool({
       description:
-        "Enqueue download_songs_from_csv job on task-runner. Pass the S3 key of an existing CSV.",
+        "Enqueue download_songs_from_spotify job on task-runner. Pass Spotify URLs or search queries.",
       parameters: z.object({
-        csv_s3_key: z
-          .string()
-          .describe("S3 object key of the CSV file containing the track list"),
-        cookies_s3_key: z
-          .string()
-          .describe(
-            "S3 object key of the cookies.txt file to use to authenticate to YouTube",
-          ),
-        start: z
-          .number()
-          .int()
-          .min(1)
-          .optional()
-          .describe("1-based first row index to process (inclusive)"),
-        end: z
-          .number()
-          .int()
-          .min(1)
-          .optional()
-          .describe("1-based last row index to process (inclusive)"),
-        embed_thumbnail: z
-          .boolean()
-          .optional()
-          .describe("Whether to embed thumbnail in album cover"),
+        queries: z
+          .array(z.string())
+          .describe("List of Spotify track URLs or search queries"),
       }),
-      async execute({
-        csv_s3_key,
-        cookies_s3_key,
-        start,
-        end,
-        embed_thumbnail,
-      }) {
+      async execute({ queries }) {
         const ctx = data.ctx;
-        // Enqueue on task-runner using the provided CSV S3 key
         const resp = await fetch(
-          `http://task-runner/tasks/download_songs_from_csv`,
+          `http://task-runner/tasks/download-songs-from-spotify`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              payload: {
-                csv_s3_key,
-                cookies_s3_key,
-                start,
-                end,
-                chat_id: ctx.chatId,
-                reply_to_message_id: ctx.msgId,
-                embed_thumbnail,
-              },
+              chat_id: ctx.chatId,
+              reply_to_message_id: ctx.msgId,
+              queries,
             }),
           },
         );
         if (!resp.ok) {
-          throw new Error(`Failed to enqueue task: ${resp.statusText}`);
+          throw new Error(`Failed to enqueue Spotify task: ${resp.statusText}`);
         }
-        const { job_id: jobId } = (await resp.json()) as { job_id: string };
+        const { task_id: taskId } = (await resp.json()) as { task_id: string };
         await telegram.sendMessage(
           ctx.chatId!,
-          `🎶 Task queued (ID: ${jobId}). I’ll send the ZIP here when it’s ready.`,
+          `🎵 Spotify download queued (ID: ${taskId}). I’ll send the ZIP when it’s ready.`,
           {
             reply_parameters: {
               message_id: ctx.msgId!,
@@ -248,7 +214,7 @@ ${url}`;
             },
           },
         );
-        return `Queued download job ${jobId}`;
+        return `Queued Spotify download job ${taskId}`;
       },
     }),
   };

@@ -6,8 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.38.36",
-    "fastapi[all]>=0.115.12",
+    "celery>=5.5.3",
+    "fastapi[all]>=0.115.13",
     "python-telegram-bot>=22.1",
     "redis>=6.2.0",
+    "spotdl",
     "yt-dlp>=2025.6.9",
 ]
+
+[tool.uv.sources]
+spotdl = { git = "https://github.com/raphtlw/spotify-downloader.git" }

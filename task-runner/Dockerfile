@@ -9,14 +9,18 @@ RUN apt-get update \
       ffmpeg \
       libsm6 \
       libxext6 \
+      git \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy files from app into container
-COPY . /app
+# Copy dependencies only
+COPY pyproject.toml uv.lock /app/
 
 # Install dependencies
 WORKDIR /app
 RUN uv sync --frozen --no-cache
 
-# Run application
-CMD [ "/app/.venv/bin/fastapi", "run", "main.py", "--port", "80", "--host", "0.0.0.0" ]
+# Add source code
+COPY . .
+
+# Run application and Celery worker
+CMD ["sh", "-c", "/app/.venv/bin/celery -A app.app worker --loglevel=info --logfile=- & exec /app/.venv/bin/fastapi run app/main.py --port 80 --host 0.0.0.0"]
