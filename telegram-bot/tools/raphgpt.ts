@@ -84,7 +84,7 @@ export function raphgptTools(data: ToolData) {
           {
             method: "POST",
             headers: {
-              "X-Goog-Api-Key": getEnv("GOOGLE_MAPS_API_KEY"),
+              "X-Goog-Api-Key": getEnv("GOOGLE_API_KEY"),
               "X-Goog-FieldMask":
                 "places.displayName,places.formattedAddress,places.priceLevel,places.googleMapsUri,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions",
             },
