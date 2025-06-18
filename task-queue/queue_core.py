@@ -87,4 +87,8 @@ class RedisTaskQueue:
             update["result"] = json.dumps(result)
         if error is not None:
             update["error"] = json.dumps(str(error))
-        self.redis.hmset(get_task_key(task_id), update)
+        tkey = get_task_key(task_id)
+        self.redis.hmset(tkey, update)
+        # Set TTL for completed (done/failed) tasks
+        if status in ("done", "failed"):
+            self.redis.expire(tkey, 600)  # 600 seconds = 10 minutes
