@@ -13,7 +13,7 @@ import { z } from "zod";
  * These tools are unique to raphGPT only and undergo RAG
  * before being included in LLM calls.
  */
-export function raphgptTools(data: ToolData) {
+export function raphgptTools({ ctx }: ToolData) {
   return {
     convert_timezone: tool({
       description:
@@ -38,7 +38,7 @@ export function raphgptTools(data: ToolData) {
           ),
       }),
       async execute({ to_timezone, from_timezone, datetime }) {
-        const user = data.ctx.from;
+        const user = ctx.from;
         if (!user) throw new Error("ctx.from not found");
         const userTz = await getConfigValue(user.id, "timezone");
         const tzFrom = from_timezone ?? userTz ?? undefined;
@@ -112,6 +112,57 @@ export function raphgptTools(data: ToolData) {
       },
     }),
 
+    codex_cli: tool({
+      description:
+        "Enqueue a codex run, on task-runner." +
+        "Codex is a coding agent created by OpenAI." +
+        "Be as detailed as possible in the prompt." +
+        "Sends a .zip file of the folder after it's done.",
+      parameters: z.object({
+        prompt: z
+          .string()
+          .describe(
+            "Prompt for project. Be as specific as you can, including all nuances and specifications about the project." +
+              "If the user did not specify clearly what they wanted, ask them before using this tool.",
+          ),
+      }),
+      async execute({ prompt }) {
+        const res = await fetch("http://task-queue-api/tasks", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            func_path: "tasks.run_codex",
+            args: [prompt],
+            kwargs: {
+              chat_id: ctx.chatId,
+              reply_to_message_id: ctx.msgId,
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          return `ERROR: ${res.status} - ${await res.text()}`;
+        }
+
+        const { task_id } = await res.json();
+
+        await telegram.sendMessage(
+          ctx.chatId!,
+          `🧠 Task queued (ID: ${task_id}). I’ll send the ZIP here when it’s ready.`,
+          {
+            reply_parameters: {
+              message_id: ctx.msgId!,
+              allow_sending_without_reply: true,
+            },
+          },
+        );
+
+        return `Task queued in another container. Task ID: ${task_id}`;
+      },
+    }),
+
     publish_raphgpt_page: tool({
       description:
         "Publishes a new MDX-formatted webpage with the given title to raphtlw.com via the raphgpt API, creates a 'raphgptPage', returns its URL, and sends a Telegram notification to the user.",
@@ -162,10 +213,10 @@ export function raphgptTools(data: ToolData) {
         const publishNotification = fmt`I've published a new webpage.
 You can view it at this URL:
 ${url}`;
-        await telegram.sendMessage(data.ctx.chatId!, publishNotification.text, {
+        await telegram.sendMessage(ctx.chatId!, publishNotification.text, {
           entities: publishNotification.entities,
           reply_parameters: {
-            message_id: data.ctx.msgId!,
+            message_id: ctx.msgId!,
             allow_sending_without_reply: true,
           },
         });

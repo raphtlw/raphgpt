@@ -46,16 +46,13 @@ async def run_codex(prompt, chat_id, reply_to_message_id):
         raise RuntimeError("Chat ID not provided")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        site_dir = os.path.join(tmpdir, "site")
-        os.makedirs(site_dir, exist_ok=True)
-
         # Run codex CLI asynchronously
         returncode, stdout, stderr = await async_subprocess_run(
             "codex",
             "--full-auto",
             "--quiet",
             f'"{prompt}"',
-            cwd=site_dir,  # To ensure it writes into the correct folder if needed
+            cwd=tmpdir,  # To ensure it writes into the correct folder if needed
         )
         if returncode != 0:
             # Forward stderr to the user if you like
@@ -84,14 +81,14 @@ async def run_codex(prompt, chat_id, reply_to_message_id):
 
         # check if there is folder content
         # if not, then end run
-        if len(os.listdir(site_dir)) > 0:
+        if len(os.listdir(tmpdir)) > 0:
             # zip site_dir (the generated website)
             zip_path = os.path.join(tmpdir, "website.zip")
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for root, _, files in os.walk(site_dir):
+                for root, _, files in os.walk(tmpdir):
                     for file in files:
                         absfile = os.path.join(root, file)
-                        arcname = os.path.relpath(absfile, site_dir)
+                        arcname = os.path.relpath(absfile, tmpdir)
                         zf.write(absfile, arcname)
 
             # Send via telegram-bot

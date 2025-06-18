@@ -19,13 +19,12 @@ RUN apt-get update \
       ffmpeg \
       libsm6 \
       libxext6 \
-    # Build dependencies
-  && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
 # Install codex
-RUN git clone https://github.com/raphtlw/codex -b raphtlw && \
-    cd codex/codex-cli && \
+ADD https://github.com/raphtlw/codex/archive/refs/heads/raphtlw.tar.gz .
+RUN tar -xvf raphtlw.tar.gz && \
+    cd codex-raphtlw/codex-cli && \
     pnpm install && pnpm build && \
     pnpm link
 
