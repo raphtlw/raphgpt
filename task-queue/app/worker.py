@@ -2,7 +2,7 @@ import importlib
 import json
 import time
 
-from queue_core import RedisTaskQueue
+from core import RedisTaskQueue
 
 
 def run_worker(poll_interval=1.0):
@@ -22,7 +22,7 @@ def run_worker(poll_interval=1.0):
 
         try:
             module_name, func_name = task["func_path"].rsplit(".", 1)
-            mod = importlib.import_module(module_name)
+            mod = importlib.import_module(module_name, "app")
             func = getattr(mod, func_name)
             args = json.loads(task.get("args", "[]"))
             kwargs = json.loads(task.get("kwargs", "{}"))

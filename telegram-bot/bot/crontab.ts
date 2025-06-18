@@ -13,7 +13,7 @@ export const freeTierResetJob = new CronJob("0 0 * * *", async () => {
 });
 
 // Handle wallet balance changes
-export const checkWalletJob = new CronJob("* * * * *", async () => {
+export const checkWalletJob = new CronJob("* * * * 5", async () => {
   const users = await db.query.users.findMany({
     where: isNotNull(tables.users.solanaWallet),
     with: {

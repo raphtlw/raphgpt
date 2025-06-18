@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional
 
+from core import RedisTaskQueue
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from queue_core import RedisTaskQueue
 
 app = FastAPI(title="Redis Task Queue API")
 

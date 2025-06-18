@@ -32,14 +32,7 @@ services:
 
   task-queue-api:
     build: ./task-queue
-    command:
-      - /app/.venv/bin/fastapi
-      - run
-      - main.py
-      - --port
-      - "80"
-      - --host
-      - "0.0.0.0"
+    command: fastapi run app/main.py --port 80 --host 0.0.0.0
     develop:
       watch:
         - path: ./task-queue
@@ -56,7 +49,7 @@ services:
 
   task-queue-worker:
     build: ./task-queue
-    command: python worker.py
+    command: uv run app/worker.py
     develop:
       watch:
         - path: ./task-queue

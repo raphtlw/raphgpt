@@ -6,5 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[all]>=0.115.13",
+    "python-telegram-bot>=22.1",
     "redis>=6.2.0",
 ]

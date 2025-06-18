@@ -32,22 +32,11 @@ export const getUSDCPrice = async () => {
   return averagePrice;
 };
 
-/**
- * Only one instance should ever be running at any time
- */
-let handleUserWalletBalanceChangeLock = false;
 export const handleUserWalletBalanceChange = async (
   user: typeof tables.users.$inferSelect & {
     solanaWallet: typeof tables.solanaWallets.$inferSelect;
   },
 ) => {
-  // Lock this process
-  while (handleUserWalletBalanceChangeLock) {
-    console.log("Waiting for lock...");
-    await Bun.sleep(100);
-  }
-  handleUserWalletBalanceChangeLock = true;
-
   // Check for dust
   const tokenAccountResponse =
     await solanaConnection.getParsedTokenAccountsByOwner(
@@ -104,6 +93,4 @@ export const handleUserWalletBalanceChange = async (
       .returning()
       .get();
   }
-
-  handleUserWalletBalanceChangeLock = false;
 };
