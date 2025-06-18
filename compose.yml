@@ -30,7 +30,8 @@ services:
     env_file: .env
     restart: unless-stopped
 
-  task-queue-api:
+  task-queue:
+    image: ghcr.io/raphtlw/raphgpt-task-queue:main
     build: ./task-queue
     command: fastapi run app/main.py --port 80 --host 0.0.0.0
     develop:
@@ -44,10 +45,9 @@ services:
           action: rebuild
     env_file: .env
     restart: unless-stopped
-    ports:
-      - 8080:80
 
   task-queue-worker:
+    image: ghcr.io/raphtlw/raphgpt-task-queue:main
     build: ./task-queue
     command: uv run app/worker.py
     develop:
