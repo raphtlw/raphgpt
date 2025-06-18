@@ -22,7 +22,7 @@ def run_worker(poll_interval=1.0):
 
         try:
             module_name, func_name = task["func_path"].rsplit(".", 1)
-            mod = importlib.import_module(module_name, "app")
+            mod = importlib.import_module(module_name)
             func = getattr(mod, func_name)
             args = json.loads(task.get("args", "[]"))
             kwargs = json.loads(task.get("kwargs", "{}"))
