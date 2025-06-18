@@ -2,7 +2,6 @@ import { run } from "@grammyjs/runner";
 import { bot } from "bot";
 import { cleanup } from "bot/cleanup";
 import { DATA_DIR, TEMP_DIR } from "bot/constants";
-import { checkWalletJob, freeTierResetJob } from "bot/crontab";
 import fs from "fs";
 
 // Register exception handlers
@@ -36,8 +35,8 @@ if (!fs.existsSync(TEMP_DIR)) {
 }
 
 // Run cron jobs
-freeTierResetJob.start();
-checkWalletJob.start();
+// freeTierResetJob.start();
+// checkWalletJob.start();
 
 // Start telegram bot
 const handle = run(bot);
