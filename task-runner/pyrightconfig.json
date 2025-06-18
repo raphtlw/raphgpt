@@ -1,5 +1,0 @@
-{
-  "include": ["app"],
-  "pythonVersion": "3.12",
-  "reportMissingImports": false
-}
