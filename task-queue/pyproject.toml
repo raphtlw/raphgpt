@@ -8,4 +8,5 @@ dependencies = [
     "fastapi[all]>=0.115.13",
     "python-telegram-bot>=22.1",
     "redis>=6.2.0",
+    "telegramify-markdown>=0.5.1",
 ]

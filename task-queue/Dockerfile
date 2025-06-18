@@ -7,6 +7,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=node:latest /usr/local/bin/ /usr/local/bin/
 COPY --from=node:latest /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 
+# Install pnpm
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN npm install -g pnpm@latest-10
+
 # Install dependencies
 RUN apt-get update \
     # Runtime dependencies
@@ -14,10 +19,15 @@ RUN apt-get update \
       ffmpeg \
       libsm6 \
       libxext6 \
+    # Build dependencies
+  && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
 # Install codex
-RUN npm i -g @openai/codex
+RUN git clone https://github.com/raphtlw/codex -b raphtlw && \
+    cd codex/codex-cli && \
+    pnpm install && pnpm build && \
+    pnpm link
 
 # Copy dependency files only
 COPY pyproject.toml /app/

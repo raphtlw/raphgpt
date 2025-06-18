@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import json
 import time
@@ -26,7 +27,7 @@ def run_worker(poll_interval=1.0):
             func = getattr(mod, func_name)
             args = json.loads(task.get("args", "[]"))
             kwargs = json.loads(task.get("kwargs", "{}"))
-            result = func(*args, **kwargs)
+            result = asyncio.run(func(*args, **kwargs))
             queue.update_task_status(task_id, "done", result=result)
             print(f"Task {task_id} done: {result!r}")
         except Exception as exc:
