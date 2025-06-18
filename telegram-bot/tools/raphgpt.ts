@@ -173,49 +173,5 @@ ${url}`;
         return url;
       },
     }),
-
-    /**
-     * Enqueue a background job to download songs from Spotify via the task-runner,
-     * then wait for completion and send back the resulting ZIP via Telegram.
-     */
-    download_songs_from_spotify: tool({
-      description:
-        "Enqueue download_songs_from_spotify job on task-runner. Pass Spotify URLs or search queries.",
-      parameters: z.object({
-        queries: z
-          .array(z.string())
-          .describe("List of Spotify track URLs or search queries"),
-      }),
-      async execute({ queries }) {
-        const ctx = data.ctx;
-        const resp = await fetch(
-          `http://task-runner/tasks/download-songs-from-spotify`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: ctx.chatId,
-              reply_to_message_id: ctx.msgId,
-              queries,
-            }),
-          },
-        );
-        if (!resp.ok) {
-          throw new Error(`Failed to enqueue Spotify task: ${resp.statusText}`);
-        }
-        const { task_id: taskId } = (await resp.json()) as { task_id: string };
-        await telegram.sendMessage(
-          ctx.chatId!,
-          `🎵 Spotify download queued (ID: ${taskId}). I’ll send the ZIP when it’s ready.`,
-          {
-            reply_parameters: {
-              message_id: ctx.msgId!,
-              allow_sending_without_reply: true,
-            },
-          },
-        );
-        return `Queued Spotify download job ${taskId}`;
-      },
-    }),
   };
 }
