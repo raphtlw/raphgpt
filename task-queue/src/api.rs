@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{task::Task, tasks::codex::CodexResult};
+use crate::{
+    task::{Task, TaskKind},
+    tasks::codex::CodexResult,
+};
 use actix_web::{HttpResponse, Responder, delete, get, post, web};
 use color_eyre::Result;
 use redis;
@@ -16,6 +19,8 @@ pub enum TaskResult {
 #[derive(Deserialize)]
 pub struct CodexRequest {
     prompt: String,
+    chat_id: i64,
+    reply_to_message_id: Option<i64>,
 }
 
 #[post("/tasks/codex")]
@@ -23,7 +28,17 @@ pub async fn tasks_codex(
     redis_client: web::Data<redis::Client>,
     body: web::Json<CodexRequest>,
 ) -> impl Responder {
-    match enqueue_job(&redis_client, Task::codex(body.prompt.clone())).await {
+    let TaskKind::Codex {
+        prompt,
+        chat_id,
+        reply_to_message_id,
+    } = Task::codex(body.prompt.clone(), body.chat_id, body.reply_to_message_id).kind
+    else {
+        unreachable!()
+    };
+
+    let task = Task::codex(prompt, chat_id, reply_to_message_id);
+    match enqueue_job(&redis_client, task).await {
         Ok(id) => HttpResponse::Accepted().json(serde_json::json!({ "id": id })),
         Err(e) => {
             log::error!("enqueue error: {e:?}");

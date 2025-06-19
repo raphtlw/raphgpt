@@ -36,16 +36,24 @@ async fn consume_once(redis_client: &redis::Client) -> Result<()> {
 
     // run it, but catch all errors
     let result_blob = match task.kind {
-        TaskKind::Codex { prompt } => match run_codex(&task.id, &prompt).await {
+        TaskKind::Codex {
+            prompt,
+            chat_id,
+            reply_to_message_id,
+        } => match run_codex(&task.id, &prompt).await {
             Ok(res) => json!({
                 "status": "completed",
-                "data": res
+                "data": res,
+                "chat_id": chat_id,
+                "reply_to_message_id": reply_to_message_id,
             }),
             Err(e) => {
                 log::error!("task {} failed: {:?}", task.id, e);
                 json!({
                     "status": "error",
-                    "message": format!("{e:#}")
+                    "message": format!("{e:#}"),
+                    "chat_id": chat_id,
+                    "reply_to_message_id": reply_to_message_id,
                 })
             }
         },

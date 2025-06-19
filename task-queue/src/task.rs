@@ -14,20 +14,28 @@ pub struct Task {
 #[serde(tag = "job_type")]
 pub enum TaskKind {
     #[serde(rename = "codex-run")]
-    Codex { prompt: String },
+    Codex {
+        prompt: String,
+        chat_id: i64,
+        reply_to_message_id: Option<i64>,
+    },
     #[serde(other)]
     Other,
 }
 
 impl Task {
-    pub fn codex(prompt: String) -> Self {
+    pub fn codex(prompt: String, chat_id: i64, reply_to_message_id: Option<i64>) -> Self {
         Self {
             id: Uuid::new_v4(),
             enqueued_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
-            kind: TaskKind::Codex { prompt },
+            kind: TaskKind::Codex {
+                prompt,
+                chat_id,
+                reply_to_message_id,
+            },
         }
     }
 }

@@ -1,3 +1,5 @@
+use aws_config::{Region, meta::region::RegionProviderChain};
+use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3, presigning::PresigningConfig};
 use bytes::Bytes;
 use color_eyre::{
@@ -51,7 +53,7 @@ pub async fn run(id: &Uuid, prompt: &str) -> Result<CodexResult> {
 
     /* 2. If codex generated files → zip them */
     let maybe_zip = if fs::read_dir(dir)?.count() > 0 {
-        let zip_path = dir.join("website.zip");
+        let zip_path = dir.parent().unwrap().join(format!("codex_{}.zip", &id));
         create_zip(&zip_path, dir)?;
         Some(Bytes::from(fs::read(&zip_path)?))
     } else {
@@ -60,9 +62,19 @@ pub async fn run(id: &Uuid, prompt: &str) -> Result<CodexResult> {
 
     let (s3_key, _presigned) = if let Some(bytes) = maybe_zip {
         let bucket = std::env::var("S3_BUCKET")?;
-        let cfg = aws_config::load_from_env().await;
+        let cfg = aws_config::from_env()
+            .region(RegionProviderChain::first_try(
+                std::env::var("S3_REGION").ok().map(Region::new),
+            ))
+            .credentials_provider(Credentials::from_keys(
+                std::env::var("S3_ACCESS_KEY_ID")?,
+                std::env::var("S3_SECRET_ACCESS_KEY")?,
+                None,
+            ))
+            .load()
+            .await;
         let client = S3::new(&cfg);
-        let key = format!("codex/{id}.zip");
+        let key = format!("codex/{}.zip", &id);
         let url = upload_zip_and_presign(&client, &bucket, &key, bytes).await?;
         (key, url)
     } else {
