@@ -127,18 +127,15 @@ export function raphgptTools({ ctx }: ToolData) {
           ),
       }),
       async execute({ prompt }) {
-        const res = await fetch("http://task-queue-api/tasks", {
+        const res = await fetch("http://task-queue/tasks/codex", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            func_path: "tasks.run_codex",
-            args: [prompt],
-            kwargs: {
-              chat_id: ctx.chatId,
-              reply_to_message_id: ctx.msgId,
-            },
+            prompt,
+            chat_id: ctx.chatId,
+            reply_to_message_id: ctx.msgId,
           }),
         });
 
@@ -146,11 +143,11 @@ export function raphgptTools({ ctx }: ToolData) {
           return `ERROR: ${res.status} - ${await res.text()}`;
         }
 
-        const { task_id } = await res.json();
+        const { id } = await res.json();
 
         await telegram.sendMessage(
           ctx.chatId!,
-          `🧠 Task queued (ID: ${task_id}). I’ll send the ZIP here when it’s ready.`,
+          `🧠 Task queued (ID: ${id}). I’ll send the ZIP here when it’s ready.`,
           {
             reply_parameters: {
               message_id: ctx.msgId!,
@@ -159,7 +156,7 @@ export function raphgptTools({ ctx }: ToolData) {
           },
         );
 
-        return `Task queued in another container. Task ID: ${task_id}`;
+        return `Task queued with task ID: ${id}. User will be notified later when it's done.`;
       },
     }),
 
