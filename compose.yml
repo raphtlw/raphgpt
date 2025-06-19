@@ -33,34 +33,14 @@ services:
   task-queue:
     image: ghcr.io/raphtlw/raphgpt-task-queue:main
     build: ./task-queue
-    command: fastapi run app/main.py --port 80 --host 0.0.0.0
     develop:
       watch:
         - path: ./task-queue
-          action: sync+restart
-          target: /app
-          ignore:
-            - .venv/
-        - path: ./task-queue/pyproject.toml
           action: rebuild
-    env_file: .env
     restart: unless-stopped
-
-  task-queue-worker:
-    image: ghcr.io/raphtlw/raphgpt-task-queue:main
-    build: ./task-queue
-    command: uv run app/worker.py
-    develop:
-      watch:
-        - path: ./task-queue
-          action: sync+restart
-          target: /app
-          ignore:
-            - .venv/
-        - path: ./task-queue/pyproject.toml
-          action: rebuild
     env_file: .env
-    restart: unless-stopped
+    environment:
+      - RUST_LOG=debug
 
   browserless:
     image: ghcr.io/browserless/chromium

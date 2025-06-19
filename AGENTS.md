@@ -8,9 +8,9 @@
 
 telegram-bot is written in TypeScript and run with Bun.
 video-parser is written in Python and managed using uv.
-task-runner is written in Python and managed using uv.
+task-runner is written in Rust and managed using cargo.
 
-Docker compose is used to manage containers, and is used in development and production. The same compose.yml file is used for both.
+Docker compose is used to manage containers, and the same compose file is used in development and production.
 All containers are to be addressed by name on the same compose network, and .env is loaded for all containerised projects.
 
 Infisical is used to manage environment variables. The .infisical.json connects this project to the infisical CLI,

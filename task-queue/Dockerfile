@@ -1,7 +1,9 @@
-FROM python:3.12-slim-bookworm
+FROM rust:latest AS base
+RUN cargo install sccache
+RUN cargo install cargo-chef
+ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# BEGIN INSTALL_CODEX
 
 # Install node
 COPY --from=node:latest /usr/local/bin/ /usr/local/bin/
@@ -12,15 +14,6 @@ ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN npm install -g pnpm@latest-10
 
-# Install dependencies
-RUN apt-get update \
-    # Runtime dependencies
-  && apt-get install -y --no-install-recommends \
-      ffmpeg \
-      libsm6 \
-      libxext6 \
-  && rm -rf /var/lib/apt/lists/*
-
 # Install codex
 ADD https://github.com/raphtlw/codex/archive/refs/heads/raphtlw.tar.gz .
 RUN tar -xvf raphtlw.tar.gz && \
@@ -28,26 +21,27 @@ RUN tar -xvf raphtlw.tar.gz && \
     pnpm install && pnpm build && \
     pnpm link
 
-# Copy dependency files only
-COPY pyproject.toml /app/
-# Optional: lock file if present
-COPY uv.lock /app/
+# END INSTALL_CODEX
 
-WORKDIR /app
-
-# Install dependencies and set up venv
-RUN uv venv && \
-    uv pip install --upgrade pip && \
-    uv sync --no-cache
-
-# Add source code
+FROM base AS planner
+WORKDIR /task-queue
 COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo chef prepare --recipe-path recipe.json
 
-# Set path python uses to resolve module imports
-ENV PYTHONPATH=/app/app
+FROM base AS builder
+WORKDIR /task-queue
+COPY --from=planner /task-queue/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo chef cook --release --recipe-path recipe.json
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+    cargo build --release
 
-# Set PATH so .venv/bin is picked up
-ENV PATH="/app/.venv/bin:$PATH"
-
-# By default, show help
-CMD ["echo", "Specify the correct command (see docker-compose.yml)"]
+FROM base AS runner
+WORKDIR /task-queue
+COPY --from=builder /task-queue/target/release/task-queue /bin/task-queue
+CMD [ "task-queue" ]
