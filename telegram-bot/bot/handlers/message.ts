@@ -366,7 +366,7 @@ messageHandler.on(["message", "edit:text"]).filter(
     console.log(`Recent messages: ${inspect(recentMessages)}`);
 
     const { object: summary } = await generateObject({
-      model: openai("gpt-4o"),
+      model: openai("gpt-4o-mini"),
       system: `You are an assistant summarizing multimodal content into search-friendly text.
 Given the following content extracted from a user's message, summarize it in a single sentence for indexing and storage.`,
       schema: z.object({
