@@ -1,119 +1,64 @@
-use crate::task::{Task, TaskKind};
-use crate::tasks::codex::run as run_codex;
-use color_eyre::Result;
-use serde_json::json;
+use crate::task::Task;
+use futures::future::BoxFuture;
+use redis::AsyncCommands;
+use redis::Client;
+use redis::Direction;
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc};
+use uuid::Uuid;
 
-pub async fn run(redis_client: redis::Client) {
-    // On startup, move any “in‐flight” tasks back to pending so they get retried
-    if let Err(e) = requeue_processing(&redis_client).await {
-        log::error!("failed to re-queue processing tasks: {:?}", e);
+pub type Handler = Arc<dyn Fn(Uuid, Value) -> BoxFuture<'static, Value> + Send + Sync>;
+
+/// This loop never returns.  It:
+/// 1) Re-queues any in‐flight `processing` items back to `pending` on startup  
+/// 2) Blocks on BLMOVE(pending→processing)  
+/// 3) GETs task:{id}, runs the appropriate handler, SETs results:{id}, LREM processing  
+pub async fn run(handlers: Arc<HashMap<String, Handler>>) -> anyhow::Result<()> {
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_owned());
+    let client = Client::open(redis_url)?;
+
+    // establish a multiplexed Redis connection
+    let redis = client.get_multiplexed_async_connection().await?;
+
+    // 1) requeue
+    {
+        let mut conn = redis.clone();
+        let inflight: Vec<String> = conn.lrange("queue:processing", 0, -1).await?;
+        for id in inflight {
+            let _: () = conn.rpush("queue:pending", &id).await?;
+        }
+        let _: () = conn.del("queue:processing").await?;
     }
 
-    tokio::spawn(async move {
-        loop {
-            if let Err(e) = consume_once(&redis_client).await {
-                log::error!("worker loop error: {e:?}");
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            }
-        }
-    });
-}
-
-async fn consume_once(redis_client: &redis::Client) -> Result<()> {
-    let mut conn = redis_client.get_multiplexed_async_connection().await?;
-
-    // atomically pop from pending → processing (block until something shows up)
-    let raw: String = redis::cmd("BLMOVE")
-        .arg("queue:pending")
-        .arg("queue:processing")
-        .arg("RIGHT")
-        .arg("LEFT")
-        .arg(0)
-        .query_async(&mut conn)
-        .await?;
-
-    let task: Task = serde_json::from_str(&raw)?;
-
-    // run it, but catch all errors
-    let result_blob = match task.kind {
-        TaskKind::Codex {
-            prompt,
-            chat_id,
-            reply_to_message_id,
-        } => match run_codex(&task.id, &prompt).await {
-            Ok(res) => json!({
-                "status": "completed",
-                "data": res,
-                "chat_id": chat_id,
-                "reply_to_message_id": reply_to_message_id,
-            }),
-            Err(e) => {
-                log::error!("task {} failed: {:?}", task.id, e);
-                json!({
-                    "status": "error",
-                    "message": format!("{e:#}"),
-                    "chat_id": chat_id,
-                    "reply_to_message_id": reply_to_message_id,
-                })
-            }
-        },
-        TaskKind::Other => {
-            log::warn!("unhandled task {:?}", task);
-            json!({
-                "status": "error",
-                "message": "unhandled task kind"
-            })
-        }
-    };
-
-    let serialized = serde_json::to_string(&result_blob)?;
-    redis::cmd("SET")
-        .arg(format!("results:{}", task.id))
-        .arg(&serialized)
-        .query_async::<()>(&mut conn)
-        .await?;
-
-    // ACK: remove from processing
-    redis::cmd("LREM")
-        .arg("queue:processing")
-        .arg(1)
-        .arg(&raw)
-        .query_async::<()>(&mut conn)
-        .await?;
-
-    Ok(())
-}
-
-/// Move everything from `queue:processing` back into `queue:pending` so we retry them
-/// on startup after a crash or restart.
-async fn requeue_processing(redis_client: &redis::Client) -> color_eyre::Result<()> {
-    let mut conn = redis_client.get_multiplexed_async_connection().await?;
-
-    let raws: Vec<String> = redis::cmd("LRANGE")
-        .arg("queue:processing")
-        .arg(0)
-        .arg(-1)
-        .query_async(&mut conn)
-        .await?;
-
-    if raws.is_empty() {
-        return Ok(());
-    }
-
-    log::info!("Re-queueing {} tasks back to pending", raws.len());
-
-    for raw in &raws {
-        redis::cmd("RPUSH")
-            .arg("queue:pending")
-            .arg(raw)
-            .query_async::<()>(&mut conn)
+    loop {
+        let mut conn = redis.clone();
+        // 2) atomically move one ID
+        let id_str: String = conn
+            .blmove(
+                "queue:pending",
+                "queue:processing",
+                Direction::Right,
+                Direction::Left,
+                0.0,
+            )
             .await?;
+        let id = Uuid::parse_str(&id_str)?;
+
+        // 3) LOAD & DESERIALIZE
+        let raw: String = conn.get(format!("task:{}", id_str)).await?;
+        let task: Task = serde_json::from_str(&raw)?;
+
+        log::debug!("Task: {:#?}", task);
+
+        // DISPATCH
+        let handler = handlers
+            .get(&task.job_type)
+            .ok_or_else(|| anyhow::anyhow!("Unknown job_type {}", task.job_type))?;
+        let result_value: Value = handler(id, task.params).await;
+        let result_json = serde_json::to_string(&result_value)?;
+
+        // STORE result + ACK
+        let _: () = conn.set(format!("results:{}", id_str), result_json).await?;
+        let _: () = conn.lrem("queue:processing", 1, &id_str).await?;
     }
-
-    redis::cmd("DEL")
-        .arg("queue:processing")
-        .query_async::<()>(&mut conn)
-        .await?;
-
-    Ok(())
 }

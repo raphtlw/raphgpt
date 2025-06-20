@@ -1,24 +1,24 @@
+use serde_json::{Value, json};
+use uuid::Uuid;
+
 use aws_config::{Region, meta::region::RegionProviderChain};
 use aws_credential_types::Credentials;
-use aws_sdk_s3::{Client as S3, presigning::PresigningConfig};
+use aws_sdk_s3::Client as S3;
 use bytes::Bytes;
 use color_eyre::{
     Result,
     eyre::{Context, eyre},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::{
     fs::{self, File},
-    io,
+    io::{self, Cursor},
     path::Path,
-    time::Duration,
 };
 use tempfile::TempDir;
 use tokio::process::Command;
-use uuid::Uuid;
 use walkdir::WalkDir;
-use zip::write::SimpleFileOptions;
+use zip::{ZipArchive, write::SimpleFileOptions};
 
 #[derive(Serialize, Deserialize)]
 pub struct CodexResult {
@@ -26,11 +26,42 @@ pub struct CodexResult {
     pub generated_zip: String, // S3 key to generated zip file
 }
 
-pub async fn run(id: &Uuid, prompt: &str) -> Result<CodexResult> {
+/// Executes a Codex job in a fresh temporary working directory (auto-deleted on drop).
+/// If `input_zip_key` is set, the zip is downloaded from S3 and extracted before running Codex.
+pub async fn run(id: &Uuid, prompt: &str, input_zip_key: Option<String>) -> Result<CodexResult> {
     let tmp = TempDir::new().context("create tmpdir")?;
     let dir = tmp.path();
 
-    /* 1. Spawn the codex CLI */
+    if let Some(key) = input_zip_key {
+        let bucket = std::env::var("S3_BUCKET")?;
+        let cfg = aws_config::from_env()
+            .region(RegionProviderChain::first_try(
+                std::env::var("S3_REGION").ok().map(Region::new),
+            ))
+            .credentials_provider(Credentials::from_keys(
+                std::env::var("S3_ACCESS_KEY_ID")?,
+                std::env::var("S3_SECRET_ACCESS_KEY")?,
+                None,
+            ))
+            .load()
+            .await;
+        let client = S3::new(&cfg);
+
+        let resp = client.get_object().bucket(&bucket).key(&key).send().await?;
+        let data = resp
+            .body
+            .collect()
+            .await
+            .context("reading input zip from S3")?;
+        let bytes = data.into_bytes();
+
+        let cursor = Cursor::new(bytes);
+        let mut archive = ZipArchive::new(cursor).context("parsing input zip archive")?;
+        archive
+            .extract(dir)
+            .context("extracting input zip archive")?;
+    }
+
     let out = Command::new("codex")
         .arg("--full-auto")
         .arg("--quiet")
@@ -53,14 +84,14 @@ pub async fn run(id: &Uuid, prompt: &str) -> Result<CodexResult> {
 
     /* 2. If codex generated files → zip them */
     let maybe_zip = if fs::read_dir(dir)?.count() > 0 {
-        let zip_path = dir.parent().unwrap().join(format!("codex_{}.zip", &id));
+        let zip_path = dir.parent().unwrap().join(format!("codex_{}.zip", id));
         create_zip(&zip_path, dir)?;
         Some(Bytes::from(fs::read(&zip_path)?))
     } else {
         None
     };
 
-    let (s3_key, _presigned) = if let Some(bytes) = maybe_zip {
+    let s3_key = if let Some(bytes) = maybe_zip {
         let bucket = std::env::var("S3_BUCKET")?;
         let cfg = aws_config::from_env()
             .region(RegionProviderChain::first_try(
@@ -74,11 +105,11 @@ pub async fn run(id: &Uuid, prompt: &str) -> Result<CodexResult> {
             .load()
             .await;
         let client = S3::new(&cfg);
-        let key = format!("codex/{}.zip", &id);
-        let url = upload_zip_and_presign(&client, &bucket, &key, bytes).await?;
-        (key, url)
+        let key = format!("codex/{}.zip", id);
+        upload_zip(&client, &bucket, &key, bytes).await?;
+        key
     } else {
-        (String::new(), String::new())
+        String::new()
     };
 
     Ok(CodexResult {
@@ -123,12 +154,13 @@ fn create_zip(zip_path: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn upload_zip_and_presign(
+/// Uploads the generated zip to S3 under the given key.
+pub async fn upload_zip(
     client: &S3,
     bucket: &str,
     key: &str,
     bytes: Bytes,
-) -> Result<String> {
+) -> Result<()> {
     use aws_sdk_s3::primitives::ByteStream;
     client
         .put_object()
@@ -138,11 +170,41 @@ pub async fn upload_zip_and_presign(
         .send()
         .await
         .context("put_object")?;
-    let presigned = client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .presigned(PresigningConfig::expires_in(Duration::from_secs(3600))?)
-        .await?;
-    Ok(presigned.uri().to_string())
+    Ok(())
+}
+
+pub async fn run_job(id: Uuid, params: Value) -> Value {
+    // parse your parameters
+    let prompt = params
+        .get("prompt")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let chat_id = params
+        .get("chat_id")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let reply_to = params.get("reply_to_message_id").and_then(Value::as_i64);
+    let input_zip_key = params
+        .get("input_zip_key")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    // call codex::run(...) which returns a `CodexResult`
+    match run(&id, prompt, input_zip_key).await {
+        Ok(res) => json!({
+            "status": "completed",
+            "data": res,
+            "chat_id": chat_id,
+            "reply_to_message_id": reply_to,
+        }),
+        Err(e) => {
+            log::error!("codex task {} failed: {:?}", id, e);
+            json!({
+                "status": "error",
+                "message": format!("{e:#}"),
+                "chat_id": chat_id,
+                "reply_to_message_id": reply_to,
+            })
+        }
+    }
 }

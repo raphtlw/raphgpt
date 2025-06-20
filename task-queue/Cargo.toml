@@ -4,30 +4,28 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-
-# web
 actix-web = "4"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["serde", "v4"] }
-redis = { version = "0.32.1", features = [
+tokio = { version = "1", features = ["full"] }
+redis = { version = "0.32", features = [
   "tokio-comp",
   "tokio-native-tls-comp",
+  "aio",
 ] }
-
-# async runtime / misc
-tokio = { version = "1", features = ["full"] }
-
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+futures = "0.3"
 log = "0.4"
-env_logger = "0.10"
-color-eyre = "0.6.5"
+anyhow = "1"
+color-eyre = "0.6"
+env_logger = "0.11"
 
-aws-config = { version = "1.8.0", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1.93.0"
-
-walkdir = "2.5.0"
-zip = { version = "4.1.0", features = ["deflate"] }
-tempfile = "3.20.0"
-bytes = "1.10.1"
-async-trait = "0.1.88"
-aws-credential-types = { version = "1.2.3", features = ["hardcoded-credentials"] }
+aws-config = { version = "1.8", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.3", features = [
+  "hardcoded-credentials",
+] }
+aws-sdk-s3 = "1.93"
+walkdir = "2.5"
+zip = { version = "4.1", features = ["deflate"] }
+tempfile = "3.20"
+bytes = "1.10"

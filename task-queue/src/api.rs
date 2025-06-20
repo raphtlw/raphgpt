@@ -1,76 +1,54 @@
-use std::collections::HashMap;
-
-use crate::{
-    task::{Task, TaskKind},
-    tasks::codex::CodexResult,
+use actix_web::{
+    HttpResponse, Responder, delete, get, post,
+    web::{Data, Json, Path},
 };
-use actix_web::{HttpResponse, Responder, delete, get, post, web};
-use color_eyre::Result;
-use redis;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use redis::AsyncCommands;
+use redis::aio::MultiplexedConnection;
+use serde_json::{Value, json};
 
-#[derive(Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum TaskResult {
-    Codex(CodexResult),
-}
+use crate::task::Task;
 
-#[derive(Deserialize)]
-pub struct CodexRequest {
-    prompt: String,
-    chat_id: i64,
-    reply_to_message_id: Option<i64>,
-}
-
-#[post("/tasks/codex")]
-pub async fn tasks_codex(
-    redis_client: web::Data<redis::Client>,
-    body: web::Json<CodexRequest>,
+/// Enqueue: POST /tasks/{job_type}   body = arbitrary JSON params
+#[post("/tasks/{job_type}")]
+pub async fn enqueue(
+    redis: Data<MultiplexedConnection>,
+    path: Path<String>,
+    body: Json<Value>,
 ) -> impl Responder {
-    let TaskKind::Codex {
-        prompt,
-        chat_id,
-        reply_to_message_id,
-    } = Task::codex(body.prompt.clone(), body.chat_id, body.reply_to_message_id).kind
-    else {
-        unreachable!()
-    };
+    let job_type = path.into_inner();
+    let task = Task::new(job_type, body.into_inner());
+    let id = task.id;
+    let key = format!("task:{}", id);
 
-    let task = Task::codex(prompt, chat_id, reply_to_message_id);
-    match enqueue_job(&redis_client, task).await {
-        Ok(id) => HttpResponse::Accepted().json(serde_json::json!({ "id": id })),
-        Err(e) => {
-            log::error!("enqueue error: {e:?}");
-            HttpResponse::InternalServerError().finish()
-        }
+    let mut conn = redis.get_ref().clone();
+    if let Err(err) = async {
+        // store the full task under task:{id} with 10m TTL
+        let payload = serde_json::to_string(&task)?;
+        let _: () = conn.set_ex(&key, payload, 600).await?;
+        // push just the id onto the pending list
+        let _: () = conn.lpush("queue:pending", id.to_string()).await?;
+        Ok::<_, anyhow::Error>(())
     }
+    .await
+    {
+        log::error!("failed to enqueue task: {:?}", err);
+        return HttpResponse::InternalServerError().finish();
+    };
+
+    HttpResponse::Accepted().json(json!({ "id": id }))
 }
 
-/// GET /tasks/{id}
-/// Get a task's result and status
+/// GET /tasks/{id} → either {"status":"processing"} or the raw results JSON
 #[get("/tasks/{id}")]
-pub async fn task_status(
-    redis_client: web::Data<redis::Client>,
-    p: web::Path<(String,)>,
-) -> impl Responder {
-    let key = format!("results:{}", p.into_inner().0);
-    let mut conn = match redis_client.get_multiplexed_async_connection().await {
-        Ok(c) => c,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-    match redis::cmd("GET")
-        .arg(&key)
-        .query_async::<Option<String>>(&mut conn)
-        .await
-    {
-        Ok(Some(raw_json)) => {
-            // we trust that raw_json is already {"status":"completed",…} or {"status":"error",…}
-            HttpResponse::Ok()
-                .content_type("application/json")
-                .body(raw_json)
-        }
-        Ok(None) => HttpResponse::Ok().json(serde_json::json!({ "status": "processing" })),
+pub async fn get_status(redis: Data<MultiplexedConnection>, path: Path<String>) -> impl Responder {
+    let id = path.into_inner();
+    let mut conn = redis.get_ref().clone();
+    let result_key = format!("results:{}", id);
+    match conn.get::<_, Option<String>>(result_key.clone()).await {
+        Ok(Some(raw_json)) => HttpResponse::Ok()
+            .content_type("application/json")
+            .body(raw_json),
+        Ok(None) => HttpResponse::Ok().json(json!({ "status": "processing" })),
         Err(e) => {
             log::error!("redis GET error: {:?}", e);
             HttpResponse::InternalServerError().finish()
@@ -78,207 +56,65 @@ pub async fn task_status(
     }
 }
 
-async fn enqueue_job(redis_client: &redis::Client, task: Task) -> Result<Uuid> {
-    let mut conn = redis_client.get_multiplexed_async_connection().await?;
-    redis::cmd("LPUSH")
-        .arg("queue:pending")
-        .arg(serde_json::to_string(&task)?)
-        .query_async::<()>(&mut conn)
-        .await?;
-    Ok(task.id)
-}
-
-#[derive(Serialize)]
-struct TaskInfo {
-    id: Uuid,
-    status: String,
-}
-
-/// GET /tasks
-/// List all tasks (pending, processing, completed)
+/// GET /tasks → list all IDs + status
 #[get("/tasks")]
-pub async fn list_tasks(redis_client: web::Data<redis::Client>) -> impl Responder {
-    let mut conn = match redis_client.get_multiplexed_async_connection().await {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Redis conn error: {:?}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
+pub async fn list_tasks(redis: Data<MultiplexedConnection>) -> impl Responder {
+    let mut conn = redis.get_ref().clone();
 
-    // 1) Pending
-    let pending: Vec<String> = match redis::cmd("LRANGE")
-        .arg("queue:pending")
-        .arg(0)
-        .arg(-1)
-        .query_async(&mut conn)
+    let pending: Vec<String> = conn
+        .lrange("queue:pending", 0, -1)
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            log::error!("Error fetching pending: {:?}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
-
-    // 2) Processing
-    let processing: Vec<String> = match redis::cmd("LRANGE")
-        .arg("queue:processing")
-        .arg(0)
-        .arg(-1)
-        .query_async(&mut conn)
+        .unwrap_or_default();
+    let processing: Vec<String> = conn
+        .lrange("queue:processing", 0, -1)
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            log::error!("Error fetching processing: {:?}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
+        .unwrap_or_default();
+    let results_keys: Vec<String> = conn.keys("results:*").await.unwrap_or_default();
 
-    // 3) Completed → scan keys "results:*"
-    let results_keys: Vec<String> = match redis::cmd("KEYS")
-        .arg("results:*")
-        .query_async(&mut conn)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            log::error!("Error listing result keys: {:?}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
-
-    // Build a map id → status (last wins: completed > processing > pending)
-    let mut map: HashMap<Uuid, String> = HashMap::new();
-    for raw in pending {
-        if let Ok(task) = serde_json::from_str::<Task>(&raw) {
-            map.insert(task.id, "pending".into());
-        }
+    let mut statuses = std::collections::HashMap::new();
+    for id in pending {
+        statuses.insert(id, "pending");
     }
-    for raw in processing {
-        if let Ok(task) = serde_json::from_str::<Task>(&raw) {
-            map.insert(task.id, "processing".into());
-        }
+    for id in processing {
+        statuses.insert(id, "processing");
     }
-    if !results_keys.is_empty() {
-        // fetch all values in one go
-        let raws: Vec<Option<String>> = redis::cmd("MGET")
-            .arg(&results_keys)
-            .query_async(&mut conn)
-            .await
-            .unwrap();
-        for (key, maybe_json) in results_keys.into_iter().zip(raws.into_iter()) {
-            if let Some(id_str) = key.strip_prefix("results:") {
-                if let Ok(id) = Uuid::parse_str(id_str) {
-                    let status = maybe_json
-                        .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
-                        .and_then(|v| {
-                            v.get("status")
-                                .and_then(|s| s.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| "completed".into());
-                    map.insert(id, status);
-                }
-            }
+    for key in results_keys {
+        if let Some(id) = key.strip_prefix("results:") {
+            statuses.insert(id.to_string(), "completed");
         }
     }
 
-    let list: Vec<TaskInfo> = map
+    let list: Vec<_> = statuses
         .into_iter()
-        .map(|(id, status)| TaskInfo { id, status })
+        .map(|(id, status)| json!({ "id": id, "status": status }))
         .collect();
 
     HttpResponse::Ok().json(list)
 }
 
 /// DELETE /tasks/{id}
-/// Remove a single task from pending/processing, and delete its result
 #[delete("/tasks/{id}")]
-pub async fn delete_task(
-    redis_client: web::Data<redis::Client>,
-    p: web::Path<(String,)>,
-) -> impl Responder {
-    let id_str = p.into_inner().0;
-    let id = match Uuid::parse_str(&id_str) {
-        Ok(u) => u,
-        Err(_) => return HttpResponse::BadRequest().body("Invalid UUID"),
-    };
+pub async fn delete_task(redis: Data<MultiplexedConnection>, path: Path<String>) -> impl Responder {
+    let id = path.into_inner();
+    let mut conn = redis.get_ref().clone();
 
-    let mut conn = match redis_client.get_multiplexed_async_connection().await {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Redis conn error: {:?}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
-
-    // Helper: pull LRANGE, parse, LREM if id matches
-    async fn scrub_list(conn: &mut redis::aio::MultiplexedConnection, list: &str, id: Uuid) {
-        if let Ok(raws) = redis::cmd("LRANGE")
-            .arg(list)
-            .arg(0)
-            .arg(-1)
-            .query_async::<Vec<String>>(conn)
-            .await
-        {
-            for raw in raws {
-                if let Ok(task) = serde_json::from_str::<Task>(&raw) {
-                    if task.id == id {
-                        let _ = redis::cmd("LREM")
-                            .arg(list)
-                            .arg(1)
-                            .arg(&raw)
-                            .query_async::<()>(&mut *conn)
-                            .await;
-                    }
-                }
-            }
-        }
-    }
-
-    scrub_list(&mut conn, "queue:pending", id).await;
-    scrub_list(&mut conn, "queue:processing", id).await;
-    let _ = redis::cmd("DEL")
-        .arg(format!("results:{}", id))
-        .query_async::<()>(&mut conn)
-        .await;
+    let _: Result<(), _> = conn.lrem("queue:pending", 0, &id).await;
+    let _: Result<(), _> = conn.lrem("queue:processing", 0, &id).await;
+    let _: Result<(), _> = conn.del(format!("task:{}", id)).await;
+    let _: Result<(), _> = conn.del(format!("results:{}", id)).await;
 
     HttpResponse::NoContent().finish()
 }
 
 /// DELETE /tasks
-/// Wipe all tasks (pending, processing, all results)
 #[delete("/tasks")]
-pub async fn delete_all_tasks(redis_client: web::Data<redis::Client>) -> impl Responder {
-    let mut conn = match redis_client.get_multiplexed_async_connection().await {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Redis conn error: {:?}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
+pub async fn delete_all(redis: Data<MultiplexedConnection>) -> impl Responder {
+    let mut conn = redis.get_ref().clone();
+    let _: Result<(), _> = conn.del(("queue:pending", "queue:processing")).await;
 
-    // delete both queues in one fell swoop
-    let _ = redis::cmd("DEL")
-        .arg("queue:pending")
-        .arg("queue:processing")
-        .query_async::<()>(&mut conn)
-        .await;
-
-    // delete all results:*
-    if let Ok(keys) = redis::cmd("KEYS")
-        .arg("results:*")
-        .query_async::<Vec<String>>(&mut conn)
-        .await
-    {
+    if let Ok(keys) = conn.keys::<_, Vec<String>>("results:*").await {
         if !keys.is_empty() {
-            let mut cmd = redis::cmd("DEL");
-            for k in keys {
-                cmd.arg(k);
-            }
-            let _ = cmd.query_async::<()>(&mut conn).await;
+            let _: Result<(), _> = conn.del(keys).await;
         }
     }
 

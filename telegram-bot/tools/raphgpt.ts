@@ -125,8 +125,12 @@ export function raphgptTools({ ctx }: ToolData) {
             "Prompt for project. Be as specific as you can, including all nuances and specifications about the project." +
               "If the user did not specify clearly what they wanted, ask them before using this tool.",
           ),
+        input_zip_key: z
+          .string()
+          .optional()
+          .describe("Zip file to unpack to use as working directory"),
       }),
-      async execute({ prompt }) {
+      async execute({ prompt, input_zip_key }) {
         const res = await fetch("http://task-queue/tasks/codex", {
           method: "POST",
           headers: {
@@ -134,6 +138,7 @@ export function raphgptTools({ ctx }: ToolData) {
           },
           body: JSON.stringify({
             prompt,
+            input_zip_key,
             chat_id: ctx.chatId,
             reply_to_message_id: ctx.msgId,
           }),

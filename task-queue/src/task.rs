@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -6,36 +7,22 @@ use uuid::Uuid;
 pub struct Task {
     pub id: Uuid,
     pub enqueued_at: i64,
-    #[serde(flatten)]
-    pub kind: TaskKind,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "job_type")]
-pub enum TaskKind {
-    #[serde(rename = "codex-run")]
-    Codex {
-        prompt: String,
-        chat_id: i64,
-        reply_to_message_id: Option<i64>,
-    },
-    #[serde(other)]
-    Other,
+    pub job_type: String,
+    pub params: Value,
 }
 
 impl Task {
-    pub fn codex(prompt: String, chat_id: i64, reply_to_message_id: Option<i64>) -> Self {
-        Self {
+    /// Create a new task of `job_type` with arbitrary JSON `params`.
+    pub fn new(job_type: impl Into<String>, params: Value) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs() as i64;
+        Task {
             id: Uuid::new_v4(),
-            enqueued_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-            kind: TaskKind::Codex {
-                prompt,
-                chat_id,
-                reply_to_message_id,
-            },
+            enqueued_at: now,
+            job_type: job_type.into(),
+            params,
         }
     }
 }
