@@ -34,6 +34,7 @@ import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
 import { generateImage } from "tools/generate-image";
+import { googleVisionTools } from "tools/google-vision";
 import { ltaAgent } from "tools/lta-agent";
 import { raphgptTools } from "tools/raphgpt";
 import { telegramTools } from "tools/telegram";
@@ -164,6 +165,8 @@ messageHandler.on(["message", "edit:text"]).filter(
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
       const file = await downloadFile(ctx);
+      const key = `images/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
+      await s3.file(key).write(Bun.file(file.localPath));
       const image = await sharp(file.localPath)
         .jpeg({ mozjpeg: true })
         .toBuffer();
@@ -171,6 +174,10 @@ messageHandler.on(["message", "edit:text"]).filter(
       toSend.push({
         type: "image",
         image,
+      });
+      toSend.push({
+        type: "text",
+        text: `Image uploaded as ${key}`,
       });
     }
     if (ctx.msg.document) {
@@ -436,6 +443,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           ltaAgent({ ctx }),
           walletExplorerAgent({ ctx }),
           agenticTools,
+          googleVisionTools({ ctx }),
         ),
         LLM_TOOLS_LIMIT,
       ),
