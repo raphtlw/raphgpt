@@ -4,6 +4,7 @@ import { tool } from "ai";
 import { getConfigValue } from "bot/config";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
+import { s3 } from "bun";
 import { getEnv } from "utils/env";
 import { z } from "zod";
 
@@ -109,6 +110,79 @@ export function raphgptTools({ ctx }: ToolData) {
         );
 
         return resp.json();
+      },
+    }),
+
+    google_lens: tool({
+      description:
+        "Perform a Google Lens image search via SerpApi. Provide an image URL and optional query parameters to refine the search results.",
+      parameters: z.object({
+        url: z.string().describe("URL of the image to search"),
+        q: z
+          .string()
+          .optional()
+          .describe(
+            "Optional query text to refine the image search (only when type is all, visual_matches, or products)",
+          ),
+        type: z
+          .enum(["all", "products", "exact_matches", "visual_matches"])
+          .optional()
+          .describe("Type of search to perform (default: all)"),
+        hl: z
+          .string()
+          .optional()
+          .describe("Language code for localization (e.g., 'en', 'es')"),
+        country: z
+          .string()
+          .optional()
+          .describe("Country code for localization (e.g., 'us', 'jp')"),
+        safe: z
+          .enum(["active", "off"])
+          .optional()
+          .describe("Safe search filter (active or off)"),
+      }),
+      async execute({ url, q, type, hl, country, safe }) {
+        console.log("[google_lens] Searching", {
+          url,
+          q,
+          type,
+          hl,
+          country,
+          safe,
+        });
+
+        if (url.startsWith("images/")) {
+          url = s3.presign(url, {
+            expiresIn: 3600,
+          });
+        }
+
+        const apiKey = getEnv("SERPAPI_API_KEY");
+        const params: Record<string, string> = {
+          engine: "google_lens",
+          url,
+          api_key: apiKey,
+        };
+        if (q) params.q = q;
+        if (type) params.type = type;
+        if (hl) params.hl = hl;
+        if (country) params.country = country;
+        if (safe) params.safe = safe;
+
+        const searchUrl =
+          "https://serpapi.com/search.json?" + new URLSearchParams(params);
+        const resp = await fetch(searchUrl);
+        if (!resp.ok) {
+          return `Error: ${resp.status} ${await resp.text()}`;
+        }
+        const data = await resp.json();
+        console.log(
+          "[google_lens] Received status",
+          data.search_metadata?.status,
+          "id",
+          data.search_metadata?.id,
+        );
+        return data;
       },
     }),
 

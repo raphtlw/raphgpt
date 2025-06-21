@@ -34,7 +34,6 @@ import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
 import { generateImage } from "tools/generate-image";
-import { googleVisionTools } from "tools/google-vision";
 import { ltaAgent } from "tools/lta-agent";
 import { raphgptTools } from "tools/raphgpt";
 import { telegramTools } from "tools/telegram";
@@ -443,7 +442,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           ltaAgent({ ctx }),
           walletExplorerAgent({ ctx }),
           agenticTools,
-          googleVisionTools({ ctx }),
         ),
         LLM_TOOLS_LIMIT,
       ),
