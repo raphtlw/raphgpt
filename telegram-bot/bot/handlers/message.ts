@@ -5,13 +5,19 @@ import { createId } from "@paralleldrive/cuid2";
 import {
   generateObject,
   streamText,
+  ToolExecutionError,
   type CoreMessage,
   type DataContent,
   type UserContent,
 } from "ai";
 import type { BotContext } from "bot";
 import { getConfigValue } from "bot/config";
-import { DATA_DIR, LLM_TOOLS_LIMIT, TEMP_DIR } from "bot/constants";
+import {
+  DATA_DIR,
+  LLM_TOOL_MAX_RETRIES,
+  LLM_TOOLS_LIMIT,
+  TEMP_DIR,
+} from "bot/constants";
 import {
   insertMessage,
   pullMessageHistory,
@@ -460,155 +466,197 @@ Title should be what this set of messages would be stored as in the RAG db.`,
       .map((r) => `User: ${r.userInput}\nBot: ${r.botResponse}`)
       .join("\n\n");
 
-    const { textStream } = streamText({
-      model: openai("o4-mini", {
-        structuredOutputs: false,
-      }),
-      tools,
-      system: await buildPrompt("system", {
-        me: JSON.stringify(ctx.me),
-        date: new TZDate(
-          new Date(),
-          (await getConfigValue(ctx.from.id, "timezone")) ?? "Asia/Singapore",
-        ).toString(),
-        language: await getConfigValue(ctx.from.id, "language"),
-        personality: (
-          await db.query.personality.findMany({ columns: { content: true } })
-        )
-          .map((r) => r.content)
-          .join("\n"),
-        userName: ctx.from.username ?? ctx.from.first_name,
-        instructions,
-        examples,
-        owner: getEnv("TELEGRAM_BOT_OWNER"),
-      }),
-      messages,
-      maxSteps: 5,
-      async onFinish(result) {
-        console.log(`Model finished with ${result.finishReason}`);
+    const system = await buildPrompt("system", {
+      me: JSON.stringify(ctx.me),
+      date: new TZDate(
+        new Date(),
+        (await getConfigValue(ctx.from.id, "timezone")) ?? "Asia/Singapore",
+      ).toString(),
+      language: await getConfigValue(ctx.from.id, "language"),
+      personality: (
+        await db.query.personality.findMany({ columns: { content: true } })
+      )
+        .map((r) => r.content)
+        .join("\n"),
+      userName: ctx.from.username ?? ctx.from.first_name,
+      instructions,
+      examples,
+      owner: getEnv("TELEGRAM_BOT_OWNER"),
+    });
 
-        if (result.finishReason === "tool-calls") {
-          console.error(
-            `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
-          );
-          return;
-        }
+    let toolRetryCount = 0;
 
-        if (ctx.msg.audio || ctx.msg.voice) {
-          ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
-          const audioFile = (await replicate.run("minimax/speech-02-turbo", {
-            input: {
-              text: result.text.split("<|message|>").join("<#0.5#>"),
-              voice_id: "English_FriendlyPerson",
-              speed: 1,
-              volume: 2,
-              pitch: 0,
-              emotion: "auto",
-              english_normalization: true,
-              sample_rate: 32000,
-              bitrate: 128000,
-              channel: "mono",
-              language_boost: "English",
-            },
-            signal: ctx.session.task?.signal,
-          })) as FileOutput;
+    const runLLM = async () => {
+      let toolError: unknown = undefined;
 
-          const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
-          await Bun.write(rawPath, await audioFile.blob());
-          const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
-          await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
+      const { textStream } = streamText({
+        model: openai("o4-mini", {
+          structuredOutputs: false,
+        }),
+        tools,
+        system,
+        messages,
+        maxSteps: 5,
+        async onFinish(result) {
+          console.log(`Model finished with ${result.finishReason}`);
 
-          await telegram.sendVoice(ctx.chatId, new InputFile(oggPath), {
-            reply_parameters: {
-              message_id: ctx.msgId,
-              allow_sending_without_reply: true,
-            },
-          });
-        }
+          if (result.finishReason === "tool-calls") {
+            if (toolRetryCount < LLM_TOOL_MAX_RETRIES) {
+              console.log(result.response.messages);
+              messages.push(...result.response.messages);
+              const finalToolCalls = result.toolCalls;
+              const lastToolCall = finalToolCalls[finalToolCalls.length - 1];
+              if (lastToolCall) {
+                messages.push({
+                  role: "tool",
+                  content: [
+                    {
+                      toolCallId: lastToolCall.toolCallId,
+                      toolName: lastToolCall.toolName,
+                      result: { toolError },
+                      type: "tool-result",
+                    },
+                  ],
+                });
+              }
+              console.log(
+                "Calling model again with last tool call updated:",
+                messages[messages.length - 1],
+              );
 
-        // Remove all pending requests
-        await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
-        ctx.session.task = null;
+              toolRetryCount++;
+              return await runLLM();
+            } else {
+              console.error("MAX RETRIES REACHED");
+              console.error(
+                `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
+              );
+              return;
+            }
+          }
 
-        {
-          const s3Bucket = getEnv("S3_BUCKET", z.string());
-          const s3Region = getEnv("S3_REGION", z.string());
-          const messageIds: number[] = [];
+          if (ctx.msg.audio || ctx.msg.voice) {
+            ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
+            const audioFile = (await replicate.run("minimax/speech-02-turbo", {
+              input: {
+                text: result.text.split("<|message|>").join("<#0.5#>"),
+                voice_id: "English_FriendlyPerson",
+                speed: 1,
+                volume: 2,
+                pitch: 0,
+                emotion: "auto",
+                english_normalization: true,
+                sample_rate: 32000,
+                bitrate: 128000,
+                channel: "mono",
+                language_boost: "English",
+              },
+              signal: ctx.session.task?.signal,
+            })) as FileOutput;
 
-          messageIds.push(
-            await insertMessage({
-              chatId: ctx.chatId,
-              userId,
-              role: "user",
-              content: toSend,
-              s3Bucket,
-              s3Region,
-            }),
-          );
-          for (const msg of result.response.messages) {
+            const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
+            await Bun.write(rawPath, await audioFile.blob());
+            const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
+            await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
+
+            await telegram.sendVoice(ctx.chatId, new InputFile(oggPath), {
+              reply_parameters: {
+                message_id: ctx.msgId,
+                allow_sending_without_reply: true,
+              },
+            });
+          }
+
+          // Remove all pending requests
+          await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
+          ctx.session.task = null;
+
+          {
+            const s3Bucket = getEnv("S3_BUCKET", z.string());
+            const s3Region = getEnv("S3_REGION", z.string());
+            const messageIds: number[] = [];
+
             messageIds.push(
               await insertMessage({
                 chatId: ctx.chatId,
                 userId,
-                role: msg.role,
-                content: msg.content,
+                role: "user",
+                content: toSend,
                 s3Bucket,
                 s3Region,
               }),
             );
+            for (const msg of result.response.messages) {
+              messageIds.push(
+                await insertMessage({
+                  chatId: ctx.chatId,
+                  userId,
+                  role: msg.role,
+                  content: msg.content,
+                  s3Bucket,
+                  s3Region,
+                }),
+              );
+            }
+
+            await vectorStore.upsert({
+              id: createId(),
+              data: summary.title,
+              metadata: { chatId, messageIds, createdAt: new Date() },
+            });
           }
+        },
+        async onError({ error }) {
+          console.error("Encountered error during AI streaming:\n", error);
+          if (ToolExecutionError.isInstance(error)) {
+            toolError = error;
+          } else {
+            ctx.session.task?.abort();
+          }
+        },
+        abortSignal: ctx.session.task?.signal,
+      });
 
-          await vectorStore.upsert({
-            id: createId(),
-            data: summary.title,
-            metadata: { chatId, messageIds, createdAt: new Date() },
+      let textBuffer = "";
+      let firstMessageSent = false;
+
+      const flushBuffer = async () => {
+        console.log(`About to flush: ${textBuffer}`);
+
+        // flush the buffer
+        if (textBuffer.trim().length > 0) {
+          const mdv2 = telegramifyMarkdown(textBuffer, "escape");
+          await telegram.sendMessage(ctx.chatId, mdv2, {
+            parse_mode: "MarkdownV2",
+            ...(ctx.editedMessage &&
+              !firstMessageSent && {
+                reply_parameters: {
+                  message_id: ctx.msgId,
+                },
+              }),
           });
+          textBuffer = "";
+          firstMessageSent = true;
         }
-      },
-      async onError({ error }) {
-        console.error(error, "Encountered error during AI streaming");
-        ctx.session.task?.abort();
-      },
-      abortSignal: ctx.session.task.signal,
-    });
+      };
 
-    let textBuffer = "";
-    let firstMessageSent = false;
+      for await (const textPart of textStream) {
+        textBuffer += textPart;
 
-    const flushBuffer = async () => {
-      console.log(`About to flush: ${textBuffer}`);
+        if (
+          textBuffer.trim().endsWith("<|message|>") ||
+          textBuffer.trim().endsWith("</|message|>")
+        ) {
+          textBuffer = textBuffer.replaceAll("<|message|>", "");
+          textBuffer = textBuffer.replaceAll("</|message|>", "");
 
-      // flush the buffer
-      if (textBuffer.trim().length > 0) {
-        const mdv2 = telegramifyMarkdown(textBuffer, "escape");
-        await telegram.sendMessage(ctx.chatId, mdv2, {
-          parse_mode: "MarkdownV2",
-          ...(ctx.editedMessage &&
-            !firstMessageSent && {
-              reply_parameters: {
-                message_id: ctx.msgId,
-              },
-            }),
-        });
-        textBuffer = "";
-        firstMessageSent = true;
+          await flushBuffer();
+        }
       }
+      await flushBuffer();
     };
 
-    for await (const textPart of textStream) {
-      textBuffer += textPart;
-
-      if (
-        textBuffer.trim().endsWith("<|message|>") ||
-        textBuffer.trim().endsWith("</|message|>")
-      ) {
-        textBuffer = textBuffer.replaceAll("<|message|>", "");
-        textBuffer = textBuffer.replaceAll("</|message|>", "");
-
-        await flushBuffer();
-      }
-    }
-    await flushBuffer();
+    await runLLM();
 
     // if (!userIsOwner) {
     //   if (userExceedsFreeMessages) {
