@@ -70,10 +70,10 @@ messageHandler.on(["message", "edit:text"]).filter(
     // Cancel the previous request if it exists
     if (ctx.session.task) {
       ctx.session.task.abort();
-      const interruptionNotification = fmt`${i}⏹️ Previous response interrupted. Processing new request...${i}`;
-      await ctx.reply(interruptionNotification.text, {
-        entities: interruptionNotification.entities,
-      });
+      // const interruptionNotification = fmt`${i}⏹️ Previous response interrupted. Processing new request...${i}`;
+      // await ctx.reply(interruptionNotification.text, {
+      //   entities: interruptionNotification.entities,
+      // });
     }
 
     if (ctx.editedMessage) {
