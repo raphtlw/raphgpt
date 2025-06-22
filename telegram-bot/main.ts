@@ -27,6 +27,9 @@ process.on("SIGTERM", async (err) => {
   process.exit(1);
 });
 
+// Register SuperJSON buffer serializer
+import "utils/superjson";
+
 // Create working directories
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
