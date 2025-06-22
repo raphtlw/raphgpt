@@ -41,8 +41,6 @@ services:
     env_file: .env
     environment:
       - RUST_LOG=debug
-    ports:
-      - 8080:80
 
   browserless:
     image: ghcr.io/browserless/chromium
