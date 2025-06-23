@@ -563,20 +563,26 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         }
       };
 
-      for await (const textPart of textStream) {
-        textBuffer += textPart;
+      try {
+        for await (const textPart of textStream) {
+          if (ctx.session.task?.signal.aborted) return;
 
-        if (
-          textBuffer.trim().endsWith("<|message|>") ||
-          textBuffer.trim().endsWith("</|message|>")
-        ) {
-          textBuffer = textBuffer.replaceAll("<|message|>", "");
-          textBuffer = textBuffer.replaceAll("</|message|>", "");
+          textBuffer += textPart;
 
-          await flushBuffer();
+          if (
+            textBuffer.trim().endsWith("<|message|>") ||
+            textBuffer.trim().endsWith("</|message|>")
+          ) {
+            textBuffer = textBuffer.replaceAll("<|message|>", "");
+            textBuffer = textBuffer.replaceAll("</|message|>", "");
+
+            await flushBuffer();
+          }
         }
+        await flushBuffer();
+      } catch (e) {
+        console.log("Error during stream iteration:", e);
       }
-      await flushBuffer();
     };
 
     await runLLM();
