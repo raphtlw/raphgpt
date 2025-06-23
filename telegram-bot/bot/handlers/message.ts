@@ -39,7 +39,6 @@ import sharp from "sharp";
 import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
-import { fileAgent } from "tools/file-agent";
 import { generateImage } from "tools/generate-image";
 import { ltaAgent } from "tools/lta-agent";
 import { raphgptTools } from "tools/raphgpt";
@@ -213,93 +212,6 @@ messageHandler.on(["message", "edit:text"]).filter(
           text: `First ${charsToRead} characters: ${(await Bun.file(file.localPath).text()).slice(0, charsToRead)}`,
         });
       }
-
-      // const file = await downloadFile(ctx);
-      // ctx.session.tempFiles.push(file.localPath);
-      // if (file.fileType) {
-      //   switch (file.fileType.ext) {
-      //     case "pdf": {
-      //       toSend.push({
-      //         type: "text",
-      //         text: "PDF file contents",
-      //       });
-
-      //       const pdfPages = await pdf2pic.fromPath(file.localPath).bulk(-1, {
-      //         responseType: "buffer",
-      //       });
-
-      //       for (const page of pdfPages) {
-      //         toSend.push({
-      //           type: "image",
-      //           image: page.buffer!,
-      //         });
-      //       }
-      //       break;
-      //     }
-      //     case "docx": {
-      //       toSend.push({
-      //         type: "text",
-      //         text: `DOCX file contents`,
-      //       });
-
-      //       const form = new FormData();
-      //       form.append("files", Bun.file(file.localPath));
-
-      //       const res = await fetch(
-      //         "http://gotenberg:3000/forms/libreoffice/convert",
-      //         {
-      //           method: "POST",
-      //           body: form,
-      //         },
-      //       );
-
-      //       if (!res.ok) {
-      //         throw new Error(
-      //           `Gotenberg failed with status ${res.status}: ${await res.text()}`,
-      //         );
-      //       }
-
-      //       const pdfPages = await pdf2pic
-      //         .fromBuffer(Buffer.from(await res.arrayBuffer()))
-      //         .bulk(-1, {
-      //           responseType: "buffer",
-      //         });
-
-      //       for (const page of pdfPages) {
-      //         const resized = await sharp(page.buffer)
-      //           .resize({
-      //             fit: "contain",
-      //             width: 512,
-      //           })
-      //           .toBuffer();
-      //         toSend.push({
-      //           type: "image",
-      //           image: resized,
-      //         });
-      //       }
-      //       break;
-      //     }
-      //     case "jpg":
-      //     case "jpeg":
-      //     case "png":
-      //     case "webp": {
-      //       toSend.push({
-      //         type: "image",
-      //         image: file.remoteUrl,
-      //       });
-      //       break;
-      //     }
-      //   }
-      // } else {
-      //   toSend.push({
-      //     type: "text",
-      //     text: "Text file contents:",
-      //   });
-      //   toSend.push({
-      //     type: "text",
-      //     text: await Bun.file(file.localPath).text(),
-      //   });
-      // }
     }
     if (ctx.msg.location) {
       toSend.push({
@@ -374,7 +286,7 @@ messageHandler.on(["message", "edit:text"]).filter(
     const { object: summary } = await generateObject({
       model: openai("gpt-4o-mini"),
       system: `You are an assistant summarizing multimodal content into search-friendly text.
-Given the following content extracted from a user's message, summarize it in a single sentence for indexing and storage.`,
+With previous messages in mind, produce queries for indexing and storage. Place more emphasis on last message.`,
       schema: z.object({
         toolQuery: z
           .string()
@@ -463,7 +375,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         LLM_TOOLS_LIMIT,
       ),
       telegramTools(ctx),
-      fileAgent({ ctx }),
     );
 
     const instrRows = await db.query.systemInstructions.findMany({

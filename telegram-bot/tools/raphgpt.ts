@@ -1,10 +1,14 @@
+import { openai } from "@ai-sdk/openai";
 import { TZDate } from "@date-fns/tz";
 import { fmt } from "@grammyjs/parse-mode";
-import { tool } from "ai";
+import { generateText, tool } from "ai";
 import { getConfigValue } from "bot/config";
 import { telegram } from "bot/telegram";
 import type { ToolData } from "bot/tool-data";
 import { s3 } from "bun";
+import { fileTypeFromBuffer } from "file-type";
+import path from "path";
+import pdf2pic from "pdf2pic";
 import { getEnv } from "utils/env";
 import { z } from "zod";
 
@@ -236,6 +240,109 @@ export function raphgptTools({ ctx }: ToolData) {
         );
 
         return `Task queued with task ID: ${id}. User will be notified later when it's done.`;
+      },
+    }),
+
+    file_operator: tool({
+      description:
+        "Fetch any file from S3 by key, turn it into images or text, " +
+        "send it plus an instruction to a multi-modal LLM, and return its reply.",
+      parameters: z.object({
+        key: z.string().describe("S3 object key/path of the file"),
+        instruction: z
+          .string()
+          .optional()
+          .describe(
+            "What to do with the file, e.g. 'give me a summary of everything in this file'",
+          ),
+      }),
+      async execute({ key, instruction }) {
+        // Download bytes from S3
+        const bucket = getEnv("S3_BUCKET", z.string());
+        const region = getEnv("S3_REGION", z.string());
+        const arrayBuffer = await s3
+          .file(key, { bucket, region })
+          .arrayBuffer();
+        const fileBuf = Buffer.from(arrayBuffer);
+
+        // Detect extension
+        const type = await fileTypeFromBuffer(fileBuf);
+        const ext = type?.ext?.toLowerCase() || "";
+
+        // Write into temp dir so pdf2pic / Gotenberg can read it
+        const localPath = path.join(ctx.session.tempDir, path.basename(key));
+        await Bun.write(localPath, fileBuf);
+
+        // Build up a list of DataContent parts
+        const parts: Array<
+          { type: "text"; text: string } | { type: "image"; image: Buffer }
+        > = [];
+
+        if (ext === "pdf") {
+          // render every page to PNG
+          parts.push({ type: "text", text: "PDF file pages:" });
+          const converter = pdf2pic.fromPath(localPath, {
+            density: 100,
+            format: "png",
+            width: 600,
+            height: 600,
+          });
+          const pages = await converter.bulk(-1, { responseType: "buffer" });
+          for (const p of pages) {
+            parts.push({ type: "image", image: Buffer.from(p.buffer!) });
+          }
+        } else if (ext === "docx") {
+          parts.push({ type: "text", text: "DOCX file pages:" });
+          const form = new FormData();
+          form.append("files", Bun.file(localPath));
+          const gotenbergRes = await fetch(
+            "http://gotenberg:3000/forms/libreoffice/convert",
+            { method: "POST", body: form },
+          );
+          const pdfBuf = Buffer.from(await gotenbergRes.arrayBuffer());
+          const pdfPath = localPath.replace(/\.docx$/, ".pdf");
+          await Bun.write(pdfPath, pdfBuf);
+          const converter = pdf2pic.fromPath(pdfPath, {
+            density: 100,
+            format: "png",
+            width: 600,
+            height: 600,
+          });
+          const pages = await converter.bulk(-1, { responseType: "buffer" });
+          for (const p of pages) {
+            parts.push({ type: "image", image: Buffer.from(p.buffer!) });
+          }
+        } else if (["jpg", "jpeg", "png", "webp"].includes(ext)) {
+          // raw image
+          parts.push({ type: "image", image: fileBuf });
+        } else {
+          // fallback to text
+          const txt = fileBuf.toString("utf8");
+          parts.push({ type: "text", text: txt });
+        }
+
+        // Append the user’s instruction
+        parts.push({
+          type: "text",
+          text:
+            instruction ??
+            "Summarize everything in this file in a few sentences.",
+        });
+
+        // Call multi-modal LLM
+        const { text } = await generateText({
+          model: openai("o4-mini", { structuredOutputs: false }),
+          system:
+            "You are a multi-modal assistant. Process the provided file contents per user instruction.",
+          messages: [
+            {
+              role: "user",
+              content: parts,
+            },
+          ],
+        });
+
+        return text;
       },
     }),
 
