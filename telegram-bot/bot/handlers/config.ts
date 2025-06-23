@@ -2,8 +2,6 @@ import { b, code, fmt, u } from "@grammyjs/parse-mode";
 import type { BotContext } from "bot";
 import { configSchema } from "bot/config";
 import { redis } from "connections/redis";
-import { db, tables } from "db";
-import { eq } from "drizzle-orm";
 import { Composer } from "grammy";
 import { getEnv } from "utils/env";
 
@@ -70,43 +68,44 @@ configHandler.command("config", async (ctx) => {
 
 configHandler.on("message:location", async (ctx) => {
   if (!ctx.from) throw new Error("ctx.from not found");
+
   const { latitude, longitude } = ctx.message.location;
   const timestamp = Math.floor(Date.now() / 1000);
-  const apiKey = getEnv("GOOGLE_API_KEY");
+  const googleKey = getEnv("GOOGLE_API_KEY");
+
+  // Call the Google Timezone API
   const res = await fetch(
-    `https://maps.googleapis.com/maps/api/timezone/json?location=${latitude},${longitude}&timestamp=${timestamp}&key=${apiKey}`,
+    `https://maps.googleapis.com/maps/api/timezone/json` +
+      `?location=${latitude},${longitude}` +
+      `&timestamp=${timestamp}` +
+      `&key=${googleKey}`,
   );
+
   if (!res.ok) {
-    console.error(
-      `Could not fetch time zone: ${res.status} returned ${await res.text()}`,
-    );
-    return;
+    console.error(`Timezone API error ${res.status}: ${await res.text()}`);
+    return ctx.reply("🚨 Failed to detect time zone. Please try again later.");
   }
+
   const json = (await res.json()) as {
     status: string;
     timeZoneId?: string;
     errorMessage?: string;
   };
   if (json.status !== "OK" || !json.timeZoneId) {
-    console.error(
-      `Error fetching time zone: ${json.errorMessage ?? json.status}`,
+    console.error(`Timezone API returned ${json.status}: ${json.errorMessage}`);
+    return ctx.reply(
+      "❌ Could not determine your time zone from that location.",
     );
-    return;
   }
+
   const tzId = json.timeZoneId;
-  const existing = await db.query.userConfig.findFirst({
-    where: eq(tables.userConfig.userId, ctx.from.id),
-  });
-  if (existing) {
-    await db
-      .update(tables.userConfig)
-      .set({ timezone: tzId })
-      .where(eq(tables.userConfig.userId, ctx.from.id));
-  } else {
-    await db.insert(tables.userConfig).values({
-      userId: ctx.from.id,
-      timezone: tzId,
-    });
-  }
-  await ctx.reply(`Your time zone has been set to ${tzId}`);
+
+  // Validate against our config schema (optional)
+  configSchema.pick({ timezone: true }).parse({ timezone: tzId });
+
+  // Store in Redis under the same hash that /set uses
+  await redis.HSET(`config:${ctx.from.id}`, "timezone", tzId);
+
+  // Notify user
+  return ctx.reply(`✅ Your time zone has been set to: ${tzId}`);
 });
