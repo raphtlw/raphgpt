@@ -66,7 +66,7 @@ configHandler.command("config", async (ctx) => {
   });
 });
 
-configHandler.on("message:location", async (ctx) => {
+configHandler.on("message:location", async (ctx, next) => {
   if (!ctx.from) throw new Error("ctx.from not found");
 
   const { latitude, longitude } = ctx.message.location;
@@ -83,7 +83,6 @@ configHandler.on("message:location", async (ctx) => {
 
   if (!res.ok) {
     console.error(`Timezone API error ${res.status}: ${await res.text()}`);
-    return ctx.reply("🚨 Failed to detect time zone. Please try again later.");
   }
 
   const json = (await res.json()) as {
@@ -93,9 +92,10 @@ configHandler.on("message:location", async (ctx) => {
   };
   if (json.status !== "OK" || !json.timeZoneId) {
     console.error(`Timezone API returned ${json.status}: ${json.errorMessage}`);
-    return ctx.reply(
+    await ctx.reply(
       "❌ Could not determine your time zone from that location.",
     );
+    return await next();
   }
 
   const tzId = json.timeZoneId;
@@ -107,5 +107,8 @@ configHandler.on("message:location", async (ctx) => {
   await redis.HSET(`config:${ctx.from.id}`, "timezone", tzId);
 
   // Notify user
-  return ctx.reply(`✅ Your time zone has been set to: ${tzId}`);
+  await ctx.reply(`✅ Your time zone has been set to: ${tzId}`);
+
+  // Continue execution, with message handler.
+  await next();
 });
