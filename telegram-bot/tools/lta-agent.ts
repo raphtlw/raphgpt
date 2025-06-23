@@ -13,7 +13,8 @@ export const ltaAgent = createAgent({
   name: "lta_agent",
   description:
     "Interact with the Singapore LTA DataMall API to get bus arrival timings, " +
-    "search bus stops, list bus services and bus routes.",
+    "search bus stops, list bus services and bus routes." +
+    "Returns the response from the agent in natural language you have to pass to the user.",
   parameters: z.object({
     instruction: z
       .string()
@@ -43,7 +44,7 @@ When invoking a tool, return only the JSON payload for the tool call. Do not inc
 
 Expand all abbreviations when answering back to your parent agent.
 `,
-  createTools: (toolData) => ({
+  createTools: ({ ctx }) => ({
     get_bus_arrival_timings: tool({
       description: `Real-time Bus Arrival information for a queried Bus Stop including next 3 oncoming buses.
 URL: https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival
@@ -132,7 +133,7 @@ Response attributes:
         });
         const queryEmbedding: number[] = queryOutput.tolist()[0]!;
 
-        const threshold = 0.5;
+        const threshold = 0.3;
         let skip = 0;
         const candidates: Array<{ stop: any; score: number }> = [];
 
@@ -165,6 +166,8 @@ Response attributes:
             const score = similarity(descEmbeddings[i]!, queryEmbedding) ?? 0;
             candidates.push({ stop: stops[i], score });
           }
+
+          console.log("Bus stop candidates:", candidates);
 
           // If a strong match is found, stop paging
           const best = candidates.reduce(
