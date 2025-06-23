@@ -117,6 +117,105 @@ export function raphgptTools({ ctx }: ToolData) {
       },
     }),
 
+    get_directions: tool({
+      description:
+        "Get turn-by-turn directions between an origin and a destination. " +
+        "Supports driving, walking, bicycling, transit, optional waypoints " +
+        "and avoidance settings.",
+      parameters: z.object({
+        origin: z
+          .string()
+          .describe(
+            'Start location: address, place name, lat/lng (`"lat,lng"`), or Place ID',
+          ),
+        destination: z
+          .string()
+          .describe(
+            'End location: address, place name, lat/lng (`"lat,lng"`), or Place ID',
+          ),
+        travel_mode: z
+          .enum(["DRIVING", "WALKING", "BICYCLING", "TRANSIT"])
+          .describe("Mode of travel"),
+        waypoints: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Optional ordered list of intermediate stops. Format same as origin/destination",
+          ),
+        avoid_ferries: z
+          .boolean()
+          .optional()
+          .describe("Whether to avoid ferries"),
+        avoid_highways: z
+          .boolean()
+          .optional()
+          .describe("Whether to avoid highways"),
+        avoid_tolls: z
+          .boolean()
+          .optional()
+          .describe("Whether to avoid toll roads"),
+        unit_system: z
+          .enum(["metric", "imperial"])
+          .optional()
+          .describe("Unit system for distances (default: metric)"),
+        departure_time: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe(
+            "Departure time as `now` or Unix timestamp (only for driving/transit)",
+          ),
+      }),
+      async execute({
+        origin,
+        destination,
+        travel_mode,
+        waypoints,
+        avoid_ferries,
+        avoid_highways,
+        avoid_tolls,
+        unit_system,
+        departure_time,
+      }) {
+        const key = getEnv("GOOGLE_API_KEY", z.string());
+        const params = new URLSearchParams({
+          origin,
+          destination,
+          mode: travel_mode.toLowerCase(),
+          key,
+        });
+
+        if (waypoints && waypoints.length > 0) {
+          // waypoints joined by '|' per API spec
+          params.append("waypoints", waypoints.join("|"));
+        }
+        if (avoid_ferries) params.append("avoid", "ferries");
+        if (avoid_highways) {
+          const prev = params.get("avoid");
+          params.set("avoid", prev ? `${prev}|highways` : "highways");
+        }
+        if (avoid_tolls) {
+          const prev = params.get("avoid");
+          params.set("avoid", prev ? `${prev}|tolls` : "tolls");
+        }
+        if (unit_system) {
+          params.append("units", unit_system);
+        }
+        if (departure_time) {
+          params.append("departure_time", String(departure_time));
+        }
+
+        const url = `https://maps.googleapis.com/maps/api/directions/json?${params}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`Google Directions API error ${res.status}: ${txt}`);
+        }
+        const data = await res.json();
+        // Return the raw JSON. LLM can pick out steps, duration, distance etc.
+        return data;
+      },
+    }),
+
     google_lens: tool({
       description:
         "Perform a Google Lens image search via SerpApi. Provide an image URL and optional query parameters to refine the search results.",
