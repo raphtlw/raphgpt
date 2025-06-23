@@ -24,6 +24,8 @@ If required, or you are unsure about how to use a library, stop all execution an
 
 After modifying files in telegram-bot please run `cd telegram-bot && bun check` and ensure the output tells you no errors.
 
+If `bun check` doesn't work, try `bunx tsc --noEmit` instead.
+
 If there are still errors after running bun check from the telegram-bot folder, resolve them.
 
 Before you stop execution, make sure to run `cd telegram-bot && bun format` (only if bun check returns no errors).

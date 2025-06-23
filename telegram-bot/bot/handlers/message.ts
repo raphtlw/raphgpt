@@ -39,6 +39,7 @@ import sharp from "sharp";
 import SuperJSON from "superjson";
 import telegramifyMarkdown from "telegramify-markdown";
 import { agenticTools } from "tools/agentic";
+import { fileAgent } from "tools/file-agent";
 import { generateImage } from "tools/generate-image";
 import { ltaAgent } from "tools/lta-agent";
 import { raphgptTools } from "tools/raphgpt";
@@ -462,6 +463,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
         LLM_TOOLS_LIMIT,
       ),
       telegramTools(ctx),
+      fileAgent({ ctx }),
     );
 
     const instrRows = await db.query.systemInstructions.findMany({

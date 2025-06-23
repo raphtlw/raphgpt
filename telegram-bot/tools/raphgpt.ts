@@ -186,12 +186,12 @@ export function raphgptTools({ ctx }: ToolData) {
       },
     }),
 
-    codex_cli: tool({
+    codex_agent: tool({
       description:
         "Enqueue a codex run, on task-runner." +
         "Codex is a coding agent created by OpenAI." +
         "Be as detailed as possible in the prompt." +
-        "Sends a .zip file of the folder after it's done.",
+        "It sends a .zip file of the folder after it's done to the user.",
       parameters: z.object({
         prompt: z
           .string()

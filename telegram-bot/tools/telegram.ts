@@ -3,7 +3,6 @@ import { tool, type ToolSet } from "ai";
 import { type BotContext } from "bot";
 import { insertMessage } from "bot/context-history";
 import { telegram } from "bot/telegram";
-import { s3 } from "bun";
 import { redis } from "connections/redis";
 import { vectorStore } from "connections/vector";
 import { db, tables } from "db";
@@ -81,41 +80,6 @@ export function telegramTools(ctx: BotContext): ToolSet {
         });
 
         return `Message sent to ${chatIdToSend}`;
-      },
-    }),
-
-    read_s3_file: tool({
-      description:
-        "Read a file from S3 by key. Returns up to `max_chars` characters of text if it's a text file, otherwise returns only the file's mime type.",
-      parameters: z.object({
-        key: z.string().describe("S3 object key/path"),
-        max_chars: z
-          .number()
-          .optional()
-          .describe("Max characters to return; defaults to 500"),
-      }),
-      async execute({ key, max_chars }) {
-        const limit = max_chars ?? 500;
-        try {
-          const file = s3.file(key);
-          const stat = await file.stat();
-          const mimeType = stat.type;
-          if (
-            mimeType.startsWith("text/") ||
-            mimeType.includes("json") ||
-            mimeType.includes("xml") ||
-            mimeType.includes("csv") ||
-            /\/.*\+xml/.test(mimeType)
-          ) {
-            const text = await file.text();
-            const truncated = text.length > limit ? text.slice(0, limit) : text;
-            return { mimeType, text: truncated };
-          } else {
-            return { mimeType };
-          }
-        } catch (e: any) {
-          return `ERROR: ${e.message}`;
-        }
       },
     }),
 
