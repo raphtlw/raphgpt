@@ -375,8 +375,18 @@ messageHandler.on(["message", "edit:text"]).filter(
       system: `You are an assistant summarizing multimodal content into search-friendly text.
 Given the following content extracted from a user's message, summarize it in a single sentence for indexing and storage.`,
       schema: z.object({
-        query: z.string(),
-        title: z.string(),
+        toolQuery: z
+          .string()
+          .describe(
+            "Text to use when searching for tools." +
+              "Include google_lens or photo when images are included.",
+          ),
+        query: z.string().describe("Search query for vector search"),
+        title: z
+          .string()
+          .describe(
+            "What to label this conversation as, when performing retrieval later on.",
+          ),
       }),
       messages: [
         ...recentMessages,
@@ -441,7 +451,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
 
     const tools = mergeTools(
       await searchTools(
-        summary.query,
+        summary.toolQuery,
         mergeTools(
           raphgptTools({ ctx }),
           generateImage({ ctx }),
