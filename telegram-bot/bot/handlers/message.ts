@@ -353,7 +353,7 @@ With previous messages in mind, produce queries for indexing and storage. Place 
     me: JSON.stringify(ctx.me),
     date: new TZDate(
       new Date(),
-      (await getConfigValue(ctx.from.id, "timezone")) ?? "Asia/Singapore",
+      await getConfigValue(ctx.from.id, "timezone"),
     ).toString(),
     language: await getConfigValue(ctx.from.id, "language"),
     personality: (

@@ -17,9 +17,8 @@ export const configSchema = z.object({
     .default(6),
   timezone: z
     .string()
-    .nullable()
     .describe("Time zone identifier (IANA format, e.g. 'Asia/Singapore')")
-    .default(null),
+    .default("Asia/Singapore"),
 });
 
 export const getConfigValue = async <K extends keyof typeof configSchema.shape>(

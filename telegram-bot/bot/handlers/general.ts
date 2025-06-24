@@ -1,4 +1,7 @@
+import { createConversation } from "@grammyjs/conversations";
+import { code, fmt } from "@grammyjs/parse-mode";
 import type { BotContext } from "bot";
+import { configSchema } from "bot/config";
 import { retrieveUser } from "bot/helpers";
 import { s3 } from "bun";
 import { redis } from "connections/redis";
@@ -9,7 +12,7 @@ import { Composer } from "grammy";
 
 export const generalHandler = new Composer<BotContext>();
 
-generalHandler.command("start", async (ctx) => {
+generalHandler.command("start", async (ctx, next) => {
   const user = await retrieveUser(ctx);
 
   await ctx.reply(
@@ -17,6 +20,40 @@ generalHandler.command("start", async (ctx) => {
       user.firstName ?? user.lastName
     }, what's up? You can send a text, photo, telebubble or a voice message.`,
   );
+
+  await next();
+});
+
+generalHandler.use(
+  createConversation(async (conversation, ctx) => {
+    await ctx.reply(
+      "Please enter your preferred language code (ISO 639-1), e.g. “en”, “es”, “zh”.",
+    );
+    const { message } = await conversation.waitFor("message:text");
+    const codeInput = message.text.trim().toLowerCase();
+    // Validate against our config schema
+    configSchema.pick({ language: true }).parse({ language: codeInput });
+    // Store in Redis
+    await redis.HSET(`config:${ctx.from!.id}`, "language", codeInput);
+    const replyMessage = fmt`Thanks! I'll speak in ${code}${codeInput}${code} from now on.`;
+    await ctx.reply(replyMessage.text, {
+      entities: replyMessage.entities,
+    });
+  }, "ask_language"),
+);
+
+generalHandler.use(async (ctx, next) => {
+  if (!ctx.from) return await next();
+  // only trigger on /start
+  if (ctx.msg?.text?.startsWith("/start")) {
+    const existing = await redis.HGET(`config:${ctx.from.id}`, "language");
+    if (!existing) {
+      // kick off the conversation
+      await ctx.conversation.enter("ask_language");
+      return;
+    }
+  }
+  await next();
 });
 
 generalHandler.command("clear", async (ctx) => {
