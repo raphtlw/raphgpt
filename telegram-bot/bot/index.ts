@@ -34,6 +34,8 @@ export type SessionData = {
   topupAmountDollars: number | null;
   pendingPaymentInvoicePayload: string | null;
   chatAction: ChatAction | null;
+
+  // Media groups
   mediaGroupId?: string;
   mediaGroupCtxs?: BotContext[];
   mediaGroupTimer?: NodeJS.Timeout;
