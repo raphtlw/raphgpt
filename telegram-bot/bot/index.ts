@@ -34,7 +34,9 @@ export type SessionData = {
   topupAmountDollars: number | null;
   pendingPaymentInvoicePayload: string | null;
   chatAction: ChatAction | null;
-  mediaGroup: string[] | null;
+  mediaGroupId?: string;
+  mediaGroupCtxs?: BotContext[];
+  mediaGroupTimer?: NodeJS.Timeout;
 };
 
 export type BotContext = SessionFlavor<SessionData> &

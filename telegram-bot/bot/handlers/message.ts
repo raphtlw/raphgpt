@@ -53,10 +53,571 @@ import { z } from "zod";
 
 export const messageHandler = new Composer<BotContext>();
 
+messageHandler.on("message:media", async (ctx, next) => {
+  const mgid = ctx.msg.media_group_id;
+  if (!mgid || !ctx.from) return await next();
+
+  // start a new group or reset if group‐id changed
+  if (ctx.session.mediaGroupId !== mgid) {
+    clearTimeout(ctx.session.mediaGroupTimer!);
+    ctx.session.mediaGroupId = mgid;
+    ctx.session.mediaGroupCtxs = [];
+  }
+
+  // buffer this incoming ctx
+  ctx.session.mediaGroupCtxs!.push(ctx);
+
+  // debounce 500ms since last media in this group
+  clearTimeout(ctx.session.mediaGroupTimer!);
+  ctx.session.mediaGroupTimer = setTimeout(async () => {
+    const buffered = ctx.session.mediaGroupCtxs!;
+    let mergedSend: UserContent = [];
+    let mergedRemind: string[] = [];
+
+    // for each media message, extract its UserContent + any system hints
+    for (const c of buffered) {
+      const [toSend, reminding] = await processTelegramMessage(c);
+      mergedSend.push(...toSend);
+      mergedRemind.push(...reminding);
+    }
+
+    ctx.session.task = new AbortController();
+
+    // enqueue them all as one pending request
+    await redis.RPUSH(
+      `pending_requests:${ctx.chatId}:${ctx.from!.id}`,
+      SuperJSON.stringify(mergedSend),
+    );
+
+    // now finally run your LLM pipeline on the grouped media
+    await gatherAndRunLLM(ctx, mergedSend, mergedRemind);
+
+    // clear buffers
+    ctx.session.mediaGroupId = undefined;
+    ctx.session.mediaGroupCtxs = undefined;
+    ctx.session.mediaGroupTimer = undefined;
+  }, 500);
+});
+
+async function processTelegramMessage(ctx: BotContext) {
+  if (!ctx.from) throw new Error("ctx.from not found");
+  if (!ctx.chatId) throw new Error("ctx.chatId not found");
+  if (!ctx.msg) throw new Error("ctx.msg not found");
+
+  const userId = ctx.from.id;
+  const chatId = ctx.chatId;
+
+  if (ctx.msg.text?.startsWith("-bot ")) {
+    ctx.msg.text = ctx.msg.text.replace("-bot ", "");
+  }
+  if (ctx.msg.caption?.startsWith("-bot ")) {
+    ctx.msg.caption = ctx.msg.caption.replace("-bot ", "");
+  }
+
+  const toSend: UserContent = [];
+  const remindingSystemPrompt: string[] = [];
+
+  if (ctx.msg.text) {
+    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
+
+    toSend.push({ type: "text", text: ctx.msg.text });
+  }
+  if (ctx.msg.voice) {
+    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
+
+    const file = await ctx.downloadFile();
+    const inputFileId = createId();
+    const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
+    await $`ffmpeg -i ${file.localPath} ${audioFilePath}`;
+
+    const transcript = (await replicate.run(
+      "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
+      {
+        input: {
+          task: "transcribe",
+          audio: file.remoteUrl,
+          language: "english",
+          batch_size: 64,
+          diarise_audio: false,
+        },
+        signal: ctx.session.task?.signal,
+      },
+    )) as { text: string };
+
+    toSend.push({ type: "text", text: transcript.text });
+  }
+  if (ctx.msg.video_note || ctx.msg.video) {
+    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
+
+    const file = await ctx.downloadFile();
+
+    const { transcript, frames, summary } = await analyzeVideo(
+      Bun.file(file.localPath),
+      "en",
+    );
+
+    remindingSystemPrompt.push(
+      "You have been given periodic frames from a video. Frames with the least amount of blur were extracted.",
+      "When responding, pretend you have watched a video.",
+      "To avoid confusing the user, do not say they are images.",
+    );
+    for (const b64 of frames) {
+      toSend.push({
+        type: "image",
+        image: b64,
+      });
+    }
+    toSend.push({ type: "text", text: transcript });
+  }
+  if (ctx.msg.photo) {
+    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
+
+    const file = await ctx.downloadFile();
+    const key = `images/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
+    await s3.file(key).write(Bun.file(file.localPath));
+    const image = await sharp(file.localPath)
+      .jpeg({ mozjpeg: true })
+      .toBuffer();
+
+    toSend.push({
+      type: "image",
+      image,
+    });
+    toSend.push({
+      type: "text",
+      text: `Image uploaded as ${key}`,
+    });
+  }
+  if (ctx.msg.document) {
+    const file = await ctx.downloadFile();
+    const key = `documents/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
+    await s3.file(key).write(Bun.file(file.localPath));
+
+    toSend.push(
+      {
+        type: "text",
+        text: `File uploaded to S3 path ${key}`,
+      },
+      {
+        type: "text",
+        text: `File size in bytes: ${ctx.msg.document.file_size}`,
+      },
+      {
+        type: "text",
+        text: `Mime type: ${ctx.msg.document.mime_type}`,
+      },
+    );
+
+    if (!file.fileType) {
+      const charsToRead = 10;
+      toSend.push({
+        type: "text",
+        text: `First ${charsToRead} characters: ${(await Bun.file(file.localPath).text()).slice(0, charsToRead)}`,
+      });
+    }
+  }
+  if (ctx.msg.location) {
+    toSend.push({
+      type: "text",
+      text: `Location: ${JSON.stringify(ctx.msg.location)}`,
+    });
+  }
+  if (ctx.msg.sticker) {
+    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
+
+    const file = await ctx.downloadFile();
+
+    let images: DataContent[];
+    if (ctx.msg.sticker.is_animated) {
+      const mp4FilePath = await new TGS(file.localPath).convertToMp4(
+        path.join(TEMP_DIR, `${createId()}.mp4`),
+      );
+      const { transcript, frames, summary } = await analyzeVideo(
+        Bun.file(mp4FilePath),
+        "en",
+      );
+      images = frames;
+    } else if (file.fileType?.mime.startsWith("video")) {
+      const stickerPath = path.join(TEMP_DIR, `sticker_${createId()}.mp4`);
+      await $`ffmpeg -i ${file.localPath} ${stickerPath}`;
+      const { transcript, frames, summary } = await analyzeVideo(
+        Bun.file(stickerPath),
+        "en",
+      );
+      images = frames;
+    } else {
+      const stickerBuffer = await sharp(file.localPath)
+        .jpeg({ mozjpeg: true })
+        .toBuffer();
+      images = [stickerBuffer];
+    }
+
+    toSend.push({
+      type: "text",
+      text: `Telegram sticker: ${JSON.stringify(ctx.msg.sticker)}`,
+    });
+    toSend.push(
+      ...images.map((img) => ({
+        type: "image" as const,
+        image: img,
+      })),
+    );
+  }
+  if (ctx.msg.caption) {
+    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
+
+    toSend.push({
+      type: "text",
+      text: ctx.msg.caption,
+    });
+  }
+
+  console.log(
+    `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
+  );
+
+  return [toSend, remindingSystemPrompt] as const;
+}
+
+async function gatherAndRunLLM(
+  ctx: BotContext,
+  toSend: Exclude<UserContent, string>,
+  remindingSystemPrompt: string[],
+) {
+  if (!ctx.from) throw new Error("ctx.from not found");
+  if (!ctx.chatId) throw new Error("ctx.chatId not found");
+  if (!ctx.msg) throw new Error("ctx.msg not found");
+
+  const userId = ctx.from.id;
+  const chatId = ctx.chatId;
+
+  // Get context history, limited to config value
+  const recentMessages = await pullMessagesByChatAndUser({
+    chatId,
+    userId,
+    limit: await getConfigValue(ctx.from.id, "messagehistsize"),
+  });
+
+  // Log context history but don't push it yet.
+  console.log(`Recent messages: ${inspect(recentMessages)}`);
+
+  const { object: summary } = await generateObject({
+    model: openai("gpt-4o-mini"),
+    system: `You are an assistant summarizing multimodal content into search-friendly text.
+With previous messages in mind, produce queries for indexing and storage. Place more emphasis on last message.`,
+    schema: z.object({
+      toolQuery: z
+        .string()
+        .describe(
+          "Text to use when searching for tools." +
+            "Include google_lens or photo when images are included.",
+        ),
+      query: z.string().describe("Search query for vector search"),
+      title: z
+        .string()
+        .describe(
+          "What to label this conversation as, when performing retrieval later on.",
+        ),
+    }),
+    messages: [
+      ...recentMessages,
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Look at this message and summarize it`,
+          },
+          ...toSend,
+        ],
+      },
+    ],
+    abortSignal: ctx.session.task?.signal,
+  });
+
+  console.log(`Summary from LLM: ${inspect(summary)}`);
+
+  // Find most relevant conversations from chat-memory vector db
+  const relatedTurns = await searchChatMemory(chatId, summary.query, 4);
+  console.log(`Most relevant conversation turns: ${inspect(relatedTurns)}`);
+
+  const messages: CoreMessage[] = [];
+
+  // Append relevant conversation turns
+  for (const turn of relatedTurns) {
+    const relatedMessages = await pullMessageHistory(turn.messageIds);
+    messages.push(...relatedMessages);
+  }
+
+  // Context history should come after relevant conversations
+  messages.push(...recentMessages);
+
+  // Remind the model what its main task is
+  messages.push({
+    role: "system",
+    content: remindingSystemPrompt.join("\n"),
+  });
+
+  const pendingRequests = await redis
+    .LRANGE(`pending_requests:${ctx.chatId}:${userId}`, 0, -1)
+    .then((jsons) => jsons.map((c: string) => SuperJSON.parse<UserContent>(c)));
+
+  console.log(`Pending requests: ${inspect(pendingRequests)}`);
+
+  const content = [...pendingRequests.flat(1), ...toSend] as UserContent;
+
+  messages.push({
+    role: "user",
+    content,
+  });
+
+  console.log(`Sending message to model: ${inspect(content)}`);
+
+  const tools = mergeTools(
+    await searchTools(
+      summary.toolQuery,
+      mergeTools(
+        raphgptTools({ ctx }),
+        generateImage({ ctx }),
+        ltaAgent({ ctx }),
+        walletExplorerAgent({ ctx }),
+        agenticTools,
+      ),
+      LLM_TOOLS_LIMIT,
+    ),
+    telegramTools(ctx),
+  );
+
+  const instrRows = await db.query.systemInstructions.findMany({
+    columns: { content: true },
+  });
+  const instructions = instrRows.map((r) => r.content).join("\n");
+
+  const exampleRows = await db.query.interactionExamples.findMany({
+    columns: { userInput: true, botResponse: true },
+  });
+  const examples = exampleRows
+    .map((r) => `User: ${r.userInput}\nBot: ${r.botResponse}`)
+    .join("\n\n");
+
+  const system = await buildPrompt("system", {
+    me: JSON.stringify(ctx.me),
+    date: new TZDate(
+      new Date(),
+      (await getConfigValue(ctx.from.id, "timezone")) ?? "Asia/Singapore",
+    ).toString(),
+    language: await getConfigValue(ctx.from.id, "language"),
+    personality: (
+      await db.query.personality.findMany({ columns: { content: true } })
+    )
+      .map((r) => r.content)
+      .join("\n"),
+    userName: ctx.from.username ?? ctx.from.first_name,
+    instructions,
+    examples,
+    owner: getEnv("TELEGRAM_BOT_OWNER"),
+  });
+
+  let toolRetryCount = 0;
+
+  const runLLM = async () => {
+    let toolError: unknown = undefined;
+
+    const { textStream } = streamText({
+      model: openai("o4-mini", {
+        structuredOutputs: false,
+      }),
+      tools,
+      system,
+      messages,
+      maxSteps: 5,
+      async onFinish(result) {
+        console.log(`Model finished with ${result.finishReason}`);
+
+        if (result.finishReason === "tool-calls") {
+          if (toolRetryCount < LLM_TOOL_MAX_RETRIES) {
+            console.log(result.response.messages);
+            messages.push(...result.response.messages);
+            const finalToolCalls = result.toolCalls;
+            const lastToolCall = finalToolCalls[finalToolCalls.length - 1];
+            if (lastToolCall) {
+              messages.push({
+                role: "tool",
+                content: [
+                  {
+                    toolCallId: lastToolCall.toolCallId,
+                    toolName: lastToolCall.toolName,
+                    result: { toolError },
+                    type: "tool-result",
+                  },
+                ],
+              });
+            }
+            console.log(
+              "Calling model again with last tool call updated:",
+              messages[messages.length - 1],
+            );
+
+            toolRetryCount++;
+            return await runLLM();
+          } else {
+            console.error("MAX RETRIES REACHED");
+            console.error(
+              `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
+            );
+            return;
+          }
+        }
+
+        if (ctx.msg?.audio || ctx.msg?.voice) {
+          ctx.session.chatAction = new ChatAction(ctx.chatId!, "record_voice");
+          const audioFile = (await replicate.run("minimax/speech-02-turbo", {
+            input: {
+              text: result.text.split("<|message|>").join("<#0.5#>"),
+              voice_id: "English_FriendlyPerson",
+              speed: 1,
+              volume: 2,
+              pitch: 0,
+              emotion: "auto",
+              english_normalization: true,
+              sample_rate: 32000,
+              bitrate: 128000,
+              channel: "mono",
+              language_boost: "English",
+            },
+            signal: ctx.session.task?.signal,
+          })) as FileOutput;
+
+          const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
+          await Bun.write(rawPath, await audioFile.blob());
+          const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
+          await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
+
+          await telegram.sendVoice(ctx.chatId!, new InputFile(oggPath), {
+            reply_parameters: {
+              message_id: ctx.msgId!,
+              allow_sending_without_reply: true,
+            },
+          });
+        }
+
+        // Remove all pending requests
+        await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
+        ctx.session.task = null;
+
+        {
+          const s3Bucket = getEnv("S3_BUCKET", z.string());
+          const s3Region = getEnv("S3_REGION", z.string());
+          const messageIds: number[] = [];
+
+          messageIds.push(
+            await insertMessage({
+              chatId: ctx.chatId!,
+              userId,
+              role: "user",
+              content: toSend,
+              s3Bucket,
+              s3Region,
+            }),
+          );
+          for (const msg of result.response.messages) {
+            messageIds.push(
+              await insertMessage({
+                chatId: ctx.chatId!,
+                userId,
+                role: msg.role,
+                content: msg.content,
+                s3Bucket,
+                s3Region,
+              }),
+            );
+          }
+
+          await vectorStore.upsert({
+            id: createId(),
+            data: summary.title,
+            metadata: { chatId, messageIds, createdAt: new Date() },
+          });
+        }
+      },
+      async onError({ error }) {
+        console.error("Encountered error during AI streaming:\n", error);
+        if (ToolExecutionError.isInstance(error)) {
+          toolError = error;
+        } else {
+          ctx.session.task?.abort();
+        }
+      },
+      abortSignal: ctx.session.task?.signal,
+    });
+
+    let textBuffer = "";
+    let firstMessageSent = false;
+
+    const flushBuffer = async () => {
+      console.log(`About to flush: ${textBuffer}`);
+
+      // flush the buffer
+      if (textBuffer.trim().length > 0) {
+        const mdv2 = telegramifyMarkdown(textBuffer, "escape");
+        await telegram.sendMessage(ctx.chatId!, mdv2, {
+          parse_mode: "MarkdownV2",
+          ...(ctx.editedMessage &&
+            !firstMessageSent && {
+              reply_parameters: {
+                message_id: ctx.msgId!,
+              },
+            }),
+        });
+        textBuffer = "";
+        firstMessageSent = true;
+      }
+    };
+
+    try {
+      for await (const textPart of textStream) {
+        if (ctx.session.task?.signal.aborted) return;
+
+        textBuffer += textPart;
+
+        if (
+          textBuffer.trim().endsWith("<|message|>") ||
+          textBuffer.trim().endsWith("</|message|>")
+        ) {
+          textBuffer = textBuffer.replaceAll("<|message|>", "");
+          textBuffer = textBuffer.replaceAll("</|message|>", "");
+
+          await flushBuffer();
+        }
+      }
+      await flushBuffer();
+    } catch (e) {
+      console.log("Error during stream iteration:", e);
+    }
+  };
+
+  await runLLM();
+
+  // if (!userIsOwner) {
+  //   if (userExceedsFreeMessages) {
+  //     await deductCredits(ctx, modelUsage);
+  //   } else {
+  //     await db
+  //       .update(tables.users)
+  //       .set({
+  //         freeTierMessageCount: sql`${tables.users.freeTierMessageCount} + 1`,
+  //       })
+  //       .where(eq(tables.users.userId, ctx.from.id));
+  //   }
+  // }
+}
+
 messageHandler
   .on(["message", "edit:text"])
   .filter(acceptPrivateOrWithPrefix, async (ctx) => {
     if (!ctx.from) throw new Error("ctx.from not found");
+    if (!ctx.chatId) throw new Error("ctx.chatId not found");
+    if (!ctx.msg) throw new Error("ctx.msg not found");
 
     const userId = ctx.from.id;
     const chatId = ctx.chatId;
@@ -79,497 +640,12 @@ messageHandler
 
     ctx.session.task = new AbortController();
 
-    if (ctx.msg.text?.startsWith("-bot ")) {
-      ctx.msg.text = ctx.msg.text.replace("-bot ", "");
-    }
-
-    const toSend: UserContent = [];
-    const remindingSystemPrompt: string[] = [];
-
-    if (ctx.msg.text) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
-      toSend.push({ type: "text", text: ctx.msg.text });
-    }
-    if (ctx.msg.voice) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
-      const file = await ctx.downloadFile();
-      const inputFileId = createId();
-      const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
-      await $`ffmpeg -i ${file.localPath} ${audioFilePath}`;
-
-      const transcript = (await replicate.run(
-        "vaibhavs10/incredibly-fast-whisper:3ab86df6c8f54c11309d4d1f930ac292bad43ace52d10c80d87eb258b3c9f79c",
-        {
-          input: {
-            task: "transcribe",
-            audio: file.remoteUrl,
-            language: "english",
-            batch_size: 64,
-            diarise_audio: false,
-          },
-          signal: ctx.session.task.signal,
-        },
-      )) as { text: string };
-
-      toSend.push({ type: "text", text: transcript.text });
-    }
-    if (ctx.msg.video_note || ctx.msg.video) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
-      const file = await ctx.downloadFile();
-
-      const { transcript, frames, summary } = await analyzeVideo(
-        Bun.file(file.localPath),
-        "en",
-      );
-
-      remindingSystemPrompt.push(
-        "You have been given periodic frames from a video. Frames with the least amount of blur were extracted.",
-        "When responding, pretend you have watched a video.",
-        "To avoid confusing the user, do not say they are images.",
-      );
-      for (const b64 of frames) {
-        toSend.push({
-          type: "image",
-          image: b64,
-        });
-      }
-      toSend.push({ type: "text", text: transcript });
-    }
-    if (ctx.msg.photo) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
-      const file = await ctx.downloadFile();
-      const key = `images/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
-      await s3.file(key).write(Bun.file(file.localPath));
-      const image = await sharp(file.localPath)
-        .jpeg({ mozjpeg: true })
-        .toBuffer();
-
-      toSend.push({
-        type: "image",
-        image,
-      });
-      toSend.push({
-        type: "text",
-        text: `Image uploaded as ${key}`,
-      });
-    }
-    if (ctx.msg.document) {
-      const file = await ctx.downloadFile();
-      const key = `documents/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
-      await s3.file(key).write(Bun.file(file.localPath));
-
-      toSend.push(
-        {
-          type: "text",
-          text: `File uploaded to S3 path ${key}`,
-        },
-        {
-          type: "text",
-          text: `File size in bytes: ${ctx.msg.document.file_size}`,
-        },
-        {
-          type: "text",
-          text: `Mime type: ${ctx.msg.document.mime_type}`,
-        },
-      );
-
-      if (!file.fileType) {
-        const charsToRead = 10;
-        toSend.push({
-          type: "text",
-          text: `First ${charsToRead} characters: ${(await Bun.file(file.localPath).text()).slice(0, charsToRead)}`,
-        });
-      }
-    }
-    if (ctx.msg.location) {
-      toSend.push({
-        type: "text",
-        text: `Location: ${JSON.stringify(ctx.msg.location)}`,
-      });
-    }
-    if (ctx.msg.sticker) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
-      const file = await ctx.downloadFile();
-
-      let images: DataContent[];
-      if (ctx.msg.sticker.is_animated) {
-        const mp4FilePath = await new TGS(file.localPath).convertToMp4(
-          path.join(TEMP_DIR, `${createId()}.mp4`),
-        );
-        const { transcript, frames, summary } = await analyzeVideo(
-          Bun.file(mp4FilePath),
-          "en",
-        );
-        images = frames;
-      } else if (file.fileType?.mime.startsWith("video")) {
-        const stickerPath = path.join(TEMP_DIR, `sticker_${createId()}.mp4`);
-        await $`ffmpeg -i ${file.localPath} ${stickerPath}`;
-        const { transcript, frames, summary } = await analyzeVideo(
-          Bun.file(stickerPath),
-          "en",
-        );
-        images = frames;
-      } else {
-        const stickerBuffer = await sharp(file.localPath)
-          .jpeg({ mozjpeg: true })
-          .toBuffer();
-        images = [stickerBuffer];
-      }
-
-      toSend.push({
-        type: "text",
-        text: `Telegram sticker: ${JSON.stringify(ctx.msg.sticker)}`,
-      });
-      toSend.push(
-        ...images.map((img) => ({
-          type: "image" as const,
-          image: img,
-        })),
-      );
-    }
-    if (ctx.msg.caption) {
-      ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
-      toSend.push({
-        type: "text",
-        text: ctx.msg.caption,
-      });
-    }
-
-    console.log(
-      `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
-    );
+    const [toSend, remindingSystemPrompt] = await processTelegramMessage(ctx);
 
     await redis.RPUSH(
       `pending_requests:${ctx.chatId}:${userId}`,
       SuperJSON.stringify(toSend),
     );
 
-    // Get context history, limited to config value
-    const recentMessages = await pullMessagesByChatAndUser({
-      chatId,
-      userId,
-      limit: await getConfigValue(ctx.from.id, "messagehistsize"),
-    });
-
-    // Log context history but don't push it yet.
-    console.log(`Recent messages: ${inspect(recentMessages)}`);
-
-    const { object: summary } = await generateObject({
-      model: openai("gpt-4o-mini"),
-      system: `You are an assistant summarizing multimodal content into search-friendly text.
-With previous messages in mind, produce queries for indexing and storage. Place more emphasis on last message.`,
-      schema: z.object({
-        toolQuery: z
-          .string()
-          .describe(
-            "Text to use when searching for tools." +
-              "Include google_lens or photo when images are included.",
-          ),
-        query: z.string().describe("Search query for vector search"),
-        title: z
-          .string()
-          .describe(
-            "What to label this conversation as, when performing retrieval later on.",
-          ),
-      }),
-      messages: [
-        ...recentMessages,
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `Return the query and the title. Query should be what you would use to search a RAG db for related messages.
-Title should be what this set of messages would be stored as in the RAG db.`,
-            },
-            ...toSend,
-          ],
-        },
-      ],
-      abortSignal: ctx.session.task.signal,
-    });
-
-    console.log(`Summary from LLM: ${inspect(summary)}`);
-
-    // Find most relevant conversations from chat-memory vector db
-    const relatedTurns = await searchChatMemory(chatId, summary.query, 4);
-    console.log(`Most relevant conversation turns: ${inspect(relatedTurns)}`);
-
-    const messages: CoreMessage[] = [];
-
-    // Append relevant conversation turns
-    for (const turn of relatedTurns) {
-      const relatedMessages = await pullMessageHistory(turn.messageIds);
-      messages.push(...relatedMessages);
-    }
-
-    // Context history should come after relevant conversations
-    messages.push(...recentMessages);
-
-    // Remind the model what its main task is
-    messages.push({
-      role: "system",
-      content: remindingSystemPrompt.join("\n"),
-    });
-
-    const pendingRequests = await redis
-      .LRANGE(`pending_requests:${ctx.chatId}:${userId}`, 0, -1)
-      .then((jsons) =>
-        jsons.map((c: string) => SuperJSON.parse<UserContent>(c)),
-      );
-
-    console.log(`Pending requests: ${inspect(pendingRequests)}`);
-
-    const content = [...pendingRequests.flat(1), ...toSend] as UserContent;
-
-    messages.push({
-      role: "user",
-      content,
-    });
-
-    console.log(`Sending message to model: ${inspect(content)}`);
-
-    const tools = mergeTools(
-      await searchTools(
-        summary.toolQuery,
-        mergeTools(
-          raphgptTools({ ctx }),
-          generateImage({ ctx }),
-          ltaAgent({ ctx }),
-          walletExplorerAgent({ ctx }),
-          agenticTools,
-        ),
-        LLM_TOOLS_LIMIT,
-      ),
-      telegramTools(ctx),
-    );
-
-    const instrRows = await db.query.systemInstructions.findMany({
-      columns: { content: true },
-    });
-    const instructions = instrRows.map((r) => r.content).join("\n");
-
-    const exampleRows = await db.query.interactionExamples.findMany({
-      columns: { userInput: true, botResponse: true },
-    });
-    const examples = exampleRows
-      .map((r) => `User: ${r.userInput}\nBot: ${r.botResponse}`)
-      .join("\n\n");
-
-    const system = await buildPrompt("system", {
-      me: JSON.stringify(ctx.me),
-      date: new TZDate(
-        new Date(),
-        (await getConfigValue(ctx.from.id, "timezone")) ?? "Asia/Singapore",
-      ).toString(),
-      language: await getConfigValue(ctx.from.id, "language"),
-      personality: (
-        await db.query.personality.findMany({ columns: { content: true } })
-      )
-        .map((r) => r.content)
-        .join("\n"),
-      userName: ctx.from.username ?? ctx.from.first_name,
-      instructions,
-      examples,
-      owner: getEnv("TELEGRAM_BOT_OWNER"),
-    });
-
-    let toolRetryCount = 0;
-
-    const runLLM = async () => {
-      let toolError: unknown = undefined;
-
-      const { textStream } = streamText({
-        model: openai("o4-mini", {
-          structuredOutputs: false,
-        }),
-        tools,
-        system,
-        messages,
-        maxSteps: 5,
-        async onFinish(result) {
-          console.log(`Model finished with ${result.finishReason}`);
-
-          if (result.finishReason === "tool-calls") {
-            if (toolRetryCount < LLM_TOOL_MAX_RETRIES) {
-              console.log(result.response.messages);
-              messages.push(...result.response.messages);
-              const finalToolCalls = result.toolCalls;
-              const lastToolCall = finalToolCalls[finalToolCalls.length - 1];
-              if (lastToolCall) {
-                messages.push({
-                  role: "tool",
-                  content: [
-                    {
-                      toolCallId: lastToolCall.toolCallId,
-                      toolName: lastToolCall.toolName,
-                      result: { toolError },
-                      type: "tool-result",
-                    },
-                  ],
-                });
-              }
-              console.log(
-                "Calling model again with last tool call updated:",
-                messages[messages.length - 1],
-              );
-
-              toolRetryCount++;
-              return await runLLM();
-            } else {
-              console.error("MAX RETRIES REACHED");
-              console.error(
-                `Not saving this time because generation stopped from a tool call! id: ${result.response.id}`,
-              );
-              return;
-            }
-          }
-
-          if (ctx.msg.audio || ctx.msg.voice) {
-            ctx.session.chatAction = new ChatAction(ctx.chatId, "record_voice");
-            const audioFile = (await replicate.run("minimax/speech-02-turbo", {
-              input: {
-                text: result.text.split("<|message|>").join("<#0.5#>"),
-                voice_id: "English_FriendlyPerson",
-                speed: 1,
-                volume: 2,
-                pitch: 0,
-                emotion: "auto",
-                english_normalization: true,
-                sample_rate: 32000,
-                bitrate: 128000,
-                channel: "mono",
-                language_boost: "English",
-              },
-              signal: ctx.session.task?.signal,
-            })) as FileOutput;
-
-            const rawPath = path.join(TEMP_DIR, `voice-${createId()}.mp3`);
-            await Bun.write(rawPath, await audioFile.blob());
-            const oggPath = rawPath.replace(/\.[^.]+$/, ".ogg");
-            await $`ffmpeg -i ${rawPath} -acodec libopus -filter:a volume=4dB ${oggPath}`;
-
-            await telegram.sendVoice(ctx.chatId, new InputFile(oggPath), {
-              reply_parameters: {
-                message_id: ctx.msgId,
-                allow_sending_without_reply: true,
-              },
-            });
-          }
-
-          // Remove all pending requests
-          await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
-          ctx.session.task = null;
-
-          {
-            const s3Bucket = getEnv("S3_BUCKET", z.string());
-            const s3Region = getEnv("S3_REGION", z.string());
-            const messageIds: number[] = [];
-
-            messageIds.push(
-              await insertMessage({
-                chatId: ctx.chatId,
-                userId,
-                role: "user",
-                content: toSend,
-                s3Bucket,
-                s3Region,
-              }),
-            );
-            for (const msg of result.response.messages) {
-              messageIds.push(
-                await insertMessage({
-                  chatId: ctx.chatId,
-                  userId,
-                  role: msg.role,
-                  content: msg.content,
-                  s3Bucket,
-                  s3Region,
-                }),
-              );
-            }
-
-            await vectorStore.upsert({
-              id: createId(),
-              data: summary.title,
-              metadata: { chatId, messageIds, createdAt: new Date() },
-            });
-          }
-        },
-        async onError({ error }) {
-          console.error("Encountered error during AI streaming:\n", error);
-          if (ToolExecutionError.isInstance(error)) {
-            toolError = error;
-          } else {
-            ctx.session.task?.abort();
-          }
-        },
-        abortSignal: ctx.session.task?.signal,
-      });
-
-      let textBuffer = "";
-      let firstMessageSent = false;
-
-      const flushBuffer = async () => {
-        console.log(`About to flush: ${textBuffer}`);
-
-        // flush the buffer
-        if (textBuffer.trim().length > 0) {
-          const mdv2 = telegramifyMarkdown(textBuffer, "escape");
-          await telegram.sendMessage(ctx.chatId, mdv2, {
-            parse_mode: "MarkdownV2",
-            ...(ctx.editedMessage &&
-              !firstMessageSent && {
-                reply_parameters: {
-                  message_id: ctx.msgId,
-                },
-              }),
-          });
-          textBuffer = "";
-          firstMessageSent = true;
-        }
-      };
-
-      try {
-        for await (const textPart of textStream) {
-          if (ctx.session.task?.signal.aborted) return;
-
-          textBuffer += textPart;
-
-          if (
-            textBuffer.trim().endsWith("<|message|>") ||
-            textBuffer.trim().endsWith("</|message|>")
-          ) {
-            textBuffer = textBuffer.replaceAll("<|message|>", "");
-            textBuffer = textBuffer.replaceAll("</|message|>", "");
-
-            await flushBuffer();
-          }
-        }
-        await flushBuffer();
-      } catch (e) {
-        console.log("Error during stream iteration:", e);
-      }
-    };
-
-    await runLLM();
-
-    // if (!userIsOwner) {
-    //   if (userExceedsFreeMessages) {
-    //     await deductCredits(ctx, modelUsage);
-    //   } else {
-    //     await db
-    //       .update(tables.users)
-    //       .set({
-    //         freeTierMessageCount: sql`${tables.users.freeTierMessageCount} + 1`,
-    //       })
-    //       .where(eq(tables.users.userId, ctx.from.id));
-    //   }
-    // }
+    await gatherAndRunLLM(ctx, toSend, remindingSystemPrompt);
   });
