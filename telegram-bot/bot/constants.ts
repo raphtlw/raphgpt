@@ -17,3 +17,6 @@ export const TYPING_INDICATOR_DURATION = 5 * 1000;
 export const LLM_TOOLS_LIMIT = 10;
 
 export const LLM_TOOL_MAX_RETRIES = 3;
+
+export const NOTIFY_INTERRUPTIONS = false;
+export const NOTIFY_EDITS = true;

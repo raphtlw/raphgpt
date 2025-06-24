@@ -16,6 +16,8 @@ import {
   DATA_DIR,
   LLM_TOOL_MAX_RETRIES,
   LLM_TOOLS_LIMIT,
+  NOTIFY_EDITS,
+  NOTIFY_INTERRUPTIONS,
   TEMP_DIR,
 } from "bot/constants";
 import {
@@ -53,52 +55,6 @@ import { z } from "zod";
 
 export const messageHandler = new Composer<BotContext>();
 
-messageHandler.on("message:media", async (ctx, next) => {
-  const mgid = ctx.msg.media_group_id;
-  if (!mgid || !ctx.from) return await next();
-
-  // start a new group or reset if group‐id changed
-  if (ctx.session.mediaGroupId !== mgid) {
-    clearTimeout(ctx.session.mediaGroupTimer!);
-    ctx.session.mediaGroupId = mgid;
-    ctx.session.mediaGroupCtxs = [];
-  }
-
-  // buffer this incoming ctx
-  ctx.session.mediaGroupCtxs!.push(ctx);
-
-  // debounce 500ms since last media in this group
-  clearTimeout(ctx.session.mediaGroupTimer!);
-  ctx.session.mediaGroupTimer = setTimeout(async () => {
-    const buffered = ctx.session.mediaGroupCtxs!;
-    let mergedSend: UserContent = [];
-    let mergedRemind: string[] = [];
-
-    // for each media message, extract its UserContent + any system hints
-    for (const c of buffered) {
-      const [toSend, reminding] = await processTelegramMessage(c);
-      mergedSend.push(...toSend);
-      mergedRemind.push(...reminding);
-    }
-
-    ctx.session.task = new AbortController();
-
-    // enqueue them all as one pending request
-    await redis.RPUSH(
-      `pending_requests:${ctx.chatId}:${ctx.from!.id}`,
-      SuperJSON.stringify(mergedSend),
-    );
-
-    // now finally run your LLM pipeline on the grouped media
-    await gatherAndRunLLM(ctx, mergedSend, mergedRemind);
-
-    // clear buffers
-    ctx.session.mediaGroupId = undefined;
-    ctx.session.mediaGroupCtxs = undefined;
-    ctx.session.mediaGroupTimer = undefined;
-  }, 500);
-});
-
 async function processTelegramMessage(ctx: BotContext) {
   if (!ctx.from) throw new Error("ctx.from not found");
   if (!ctx.chatId) throw new Error("ctx.chatId not found");
@@ -118,13 +74,9 @@ async function processTelegramMessage(ctx: BotContext) {
   const remindingSystemPrompt: string[] = [];
 
   if (ctx.msg.text) {
-    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
     toSend.push({ type: "text", text: ctx.msg.text });
   }
   if (ctx.msg.voice) {
-    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
     const file = await ctx.downloadFile();
     const inputFileId = createId();
     const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
@@ -147,8 +99,6 @@ async function processTelegramMessage(ctx: BotContext) {
     toSend.push({ type: "text", text: transcript.text });
   }
   if (ctx.msg.video_note || ctx.msg.video) {
-    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
     const file = await ctx.downloadFile();
 
     const { transcript, frames, summary } = await analyzeVideo(
@@ -170,8 +120,6 @@ async function processTelegramMessage(ctx: BotContext) {
     toSend.push({ type: "text", text: transcript });
   }
   if (ctx.msg.photo) {
-    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
     const file = await ctx.downloadFile();
     const key = `images/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
     await s3.file(key).write(Bun.file(file.localPath));
@@ -223,8 +171,6 @@ async function processTelegramMessage(ctx: BotContext) {
     });
   }
   if (ctx.msg.sticker) {
-    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
     const file = await ctx.downloadFile();
 
     let images: DataContent[];
@@ -264,8 +210,6 @@ async function processTelegramMessage(ctx: BotContext) {
     );
   }
   if (ctx.msg.caption) {
-    ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
-
     toSend.push({
       type: "text",
       text: ctx.msg.caption,
@@ -372,6 +316,8 @@ With previous messages in mind, produce queries for indexing and storage. Place 
   });
 
   console.log(`Sending message to model: ${inspect(content)}`);
+
+  ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
   const tools = mergeTools(
     await searchTools(
@@ -501,9 +447,10 @@ With previous messages in mind, produce queries for indexing and storage. Place 
           });
         }
 
-        // Remove all pending requests
+        // This marks the end of this turn
         await redis.del(`pending_requests:${ctx.chatId}:${userId}`);
         ctx.session.task = null;
+        ctx.session.chatAction?.stop();
 
         {
           const s3Bucket = getEnv("S3_BUCKET", z.string());
@@ -597,55 +544,104 @@ With previous messages in mind, produce queries for indexing and storage. Place 
   };
 
   await runLLM();
-
-  // if (!userIsOwner) {
-  //   if (userExceedsFreeMessages) {
-  //     await deductCredits(ctx, modelUsage);
-  //   } else {
-  //     await db
-  //       .update(tables.users)
-  //       .set({
-  //         freeTierMessageCount: sql`${tables.users.freeTierMessageCount} + 1`,
-  //       })
-  //       .where(eq(tables.users.userId, ctx.from.id));
-  //   }
-  // }
 }
 
 messageHandler
-  .on(["message", "edit:text"])
-  .filter(acceptPrivateOrWithPrefix, async (ctx) => {
-    if (!ctx.from) throw new Error("ctx.from not found");
-    if (!ctx.chatId) throw new Error("ctx.chatId not found");
-    if (!ctx.msg) throw new Error("ctx.msg not found");
+  .on("message:media")
+  .filter(acceptPrivateOrWithPrefix)
+  .filter(
+    (ctx) => !!ctx.msg.media_group_id,
+    async (ctx, next) => {
+      const mgid = ctx.msg.media_group_id;
 
-    const userId = ctx.from.id;
-    const chatId = ctx.chatId;
+      // start a new group or reset if group‐id changed
+      if (ctx.session.mediaGroupId !== mgid) {
+        clearTimeout(ctx.session.mediaGroupTimer!);
+        ctx.session.mediaGroupId = mgid;
+        ctx.session.mediaGroupCtxs = [];
+      }
 
-    // Cancel the previous request if it exists
-    if (ctx.session.task) {
-      ctx.session.task.abort();
-      // const interruptionNotification = fmt`${i}⏹️ Previous response interrupted. Processing new request...${i}`;
-      // await ctx.reply(interruptionNotification.text, {
-      //   entities: interruptionNotification.entities,
-      // });
-    }
+      // buffer this incoming ctx
+      ctx.session.mediaGroupCtxs!.push(ctx);
 
-    if (ctx.editedMessage) {
-      const editedMessageNotification = fmt`${i}Noticed you edited a message. Revisiting it...${i}`;
-      await ctx.reply(editedMessageNotification.text, {
-        entities: editedMessageNotification.entities,
-      });
-    }
+      // debounce 500ms since last media in this group
+      clearTimeout(ctx.session.mediaGroupTimer!);
+      ctx.session.mediaGroupTimer = setTimeout(async () => {
+        const buffered = ctx.session.mediaGroupCtxs!;
+        let mergedSend: UserContent = [];
+        let mergedRemind: string[] = [];
 
-    ctx.session.task = new AbortController();
+        // for each media message, extract its UserContent + any system hints
+        for (const c of buffered) {
+          const [toSend, reminding] = await processTelegramMessage(c);
+          mergedSend.push(...toSend);
+          mergedRemind.push(...reminding);
+        }
 
-    const [toSend, remindingSystemPrompt] = await processTelegramMessage(ctx);
+        ctx.session.task = new AbortController();
 
-    await redis.RPUSH(
-      `pending_requests:${ctx.chatId}:${userId}`,
-      SuperJSON.stringify(toSend),
-    );
+        // enqueue them all as one pending request
+        await redis.RPUSH(
+          `pending_requests:${ctx.chatId}:${ctx.from!.id}`,
+          SuperJSON.stringify(mergedSend),
+        );
 
-    await gatherAndRunLLM(ctx, toSend, remindingSystemPrompt);
-  });
+        // now finally run your LLM pipeline on the grouped media
+        await gatherAndRunLLM(ctx, mergedSend, mergedRemind);
+
+        // clear buffers
+        ctx.session.mediaGroupId = undefined;
+        ctx.session.mediaGroupCtxs = undefined;
+        ctx.session.mediaGroupTimer = undefined;
+
+        await next();
+      }, 500);
+    },
+  );
+
+messageHandler
+  .on(["message", "edit"])
+  .filter(acceptPrivateOrWithPrefix)
+  .filter(
+    (ctx) => !ctx.msg.media_group_id,
+    async (ctx, next) => {
+      if (!ctx.from) throw new Error("ctx.from not found");
+      if (!ctx.chatId) throw new Error("ctx.chatId not found");
+      if (!ctx.msg) throw new Error("ctx.msg not found");
+
+      const userId = ctx.from.id;
+      const chatId = ctx.chatId;
+
+      // Cancel the previous request if it exists
+      if (ctx.session.task) {
+        ctx.session.task.abort();
+
+        if (NOTIFY_INTERRUPTIONS) {
+          const interruptionNotification = fmt`${i}⏹️ Previous response interrupted. Processing new request...${i}`;
+          await ctx.reply(interruptionNotification.text, {
+            entities: interruptionNotification.entities,
+          });
+        }
+      }
+
+      if (ctx.editedMessage && NOTIFY_EDITS) {
+        const editedMessageNotification = fmt`${i}👀 Noticed you edited a message. Revisiting it...${i}`;
+        await ctx.reply(editedMessageNotification.text, {
+          entities: editedMessageNotification.entities,
+        });
+      }
+
+      ctx.session.task = new AbortController();
+
+      const [toSend, remindingSystemPrompt] = await processTelegramMessage(ctx);
+
+      await redis.RPUSH(
+        `pending_requests:${ctx.chatId}:${userId}`,
+        SuperJSON.stringify(toSend),
+      );
+
+      await gatherAndRunLLM(ctx, toSend, remindingSystemPrompt);
+
+      await next();
+    },
+  );

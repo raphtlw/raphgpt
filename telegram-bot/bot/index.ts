@@ -56,22 +56,16 @@ function telegramFileMiddleware<
 >(): Middleware<C> {
   return async (ctx, next) => {
     ctx.downloadFile = async () => {
-      if (ctx.has(":file")) {
-        const telegramFile = await ctx.getFile();
-        if (!telegramFile.file_path)
-          throw new Error(
-            "Cannot call downloadFile when there is no file path!",
-          );
+      const telegramFile = await ctx.getFile();
+      if (!telegramFile.file_path)
+        throw new Error("Cannot call downloadFile when there is no file path!");
 
-        const destination = path.join(
-          ctx.session.tempDir,
-          path.basename(telegramFile.file_path),
-        );
+      const destination = path.join(
+        ctx.session.tempDir,
+        path.basename(telegramFile.file_path),
+      );
 
-        return await downloadTelegramFile(telegramFile, destination);
-      }
-
-      throw new Error("downloadFile called on context with no file");
+      return await downloadTelegramFile(telegramFile, destination);
     };
 
     await next();
