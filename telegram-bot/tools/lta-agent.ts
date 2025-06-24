@@ -5,10 +5,6 @@ import { getEnv } from "utils/env";
 import { featureExtractor } from "utils/feature-extractor";
 import { z } from "zod";
 
-/**
- * ltaAgent: an agent that interacts with the LTA DataMall API
- * for Singapore bus timings, stops, services, and routes.
- */
 export const ltaAgent = createAgent({
   name: "lta_agent",
   description:
@@ -18,7 +14,9 @@ export const ltaAgent = createAgent({
   parameters: z.object({
     instruction: z
       .string()
-      .describe("Natural language instruction for LTA bus operations"),
+      .describe(
+        "Natural language instruction for LTA bus operations. If user provided names use the names verbatim.",
+      ),
   }),
   system: `
 You are the LTA DataMall Agent, a specialized sub-agent for bus-related queries in Singapore on behalf of a higher-level language model.
@@ -26,11 +24,6 @@ You are the LTA DataMall Agent, a specialized sub-agent for bus-related queries 
 Your mission:
   • Answer natural language questions about bus arrival times, stop information, service routes, and passenger volumes.
   • Enrich responses with helpful details like upcoming bus schedules, stop sequences, and ridership data.
-
-Sample user requests:
-  • “When does the next bus 15 arrive at Eunos Station?”
-  • “Give me bus timings for all services at Parkway Parade.”
-  • “What is the passenger volume at bus stop 64009 for August 2025?”
 
 Available tools:
   • get_bus_arrival_timings(stop_id, service_no?, accept?): Real-time next bus arrivals for a stop (and optional service).
@@ -166,8 +159,6 @@ Response attributes:
             const score = similarity(descEmbeddings[i]!, queryEmbedding) ?? 0;
             candidates.push({ stop: stops[i], score });
           }
-
-          console.log("Bus stop candidates:", candidates);
 
           // If a strong match is found, stop paging
           const best = candidates.reduce(
