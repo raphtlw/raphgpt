@@ -23,8 +23,9 @@ import {
   pullMessageHistory,
   pullMessagesByChatAndUser,
 } from "bot/context-history";
+import { acceptPrivateOrWithPrefix } from "bot/filters";
 import { ChatAction } from "bot/running-tasks";
-import { downloadFile, telegram } from "bot/telegram";
+import { telegram } from "bot/telegram";
 import { $, inspect, s3 } from "bun";
 import { redis } from "connections/redis";
 import { replicate } from "connections/replicate";
@@ -52,22 +53,9 @@ import { z } from "zod";
 
 export const messageHandler = new Composer<BotContext>();
 
-messageHandler.on(["message", "edit:text"]).filter(
-  async (ctx) => {
-    if (!ctx.from) throw new Error("ctx.from not found");
-
-    if (ctx.hasChatType("private")) {
-      return true;
-    }
-    if (
-      ctx.from.id === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number()) &&
-      ctx.msg.text?.startsWith("-bot ")
-    ) {
-      return true;
-    }
-    return false;
-  },
-  async (ctx) => {
+messageHandler
+  .on(["message", "edit:text"])
+  .filter(acceptPrivateOrWithPrefix, async (ctx) => {
     if (!ctx.from) throw new Error("ctx.from not found");
 
     const userId = ctx.from.id;
@@ -91,22 +79,6 @@ messageHandler.on(["message", "edit:text"]).filter(
 
     ctx.session.task = new AbortController();
 
-    // const user = await retrieveUser(ctx);
-
-    // // Check if user has enough free messages
-    // // Check if user has enough credits
-    // // Excluding TELEGRAM_BOT_OWNER
-    // const userExceedsFreeMessages =
-    //   user.freeTierMessageCount >
-    //   getEnv("FREE_TIER_MESSAGE_DAILY_THRESHOLD", z.coerce.number());
-    // const userIsOwner =
-    //   user.userId === getEnv("TELEGRAM_BOT_OWNER", z.coerce.number());
-    // if (userExceedsFreeMessages && user.credits <= 0 && !userIsOwner) {
-    //   return await ctx.reply(
-    //     "You have run out of credits! Use /topup to get more.",
-    //   );
-    // }
-
     if (ctx.msg.text?.startsWith("-bot ")) {
       ctx.msg.text = ctx.msg.text.replace("-bot ", "");
     }
@@ -122,7 +94,7 @@ messageHandler.on(["message", "edit:text"]).filter(
     if (ctx.msg.voice) {
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
-      const file = await downloadFile(ctx);
+      const file = await ctx.downloadFile();
       const inputFileId = createId();
       const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
       await $`ffmpeg -i ${file.localPath} ${audioFilePath}`;
@@ -146,7 +118,7 @@ messageHandler.on(["message", "edit:text"]).filter(
     if (ctx.msg.video_note || ctx.msg.video) {
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
-      const file = await downloadFile(ctx);
+      const file = await ctx.downloadFile();
 
       const { transcript, frames, summary } = await analyzeVideo(
         Bun.file(file.localPath),
@@ -169,7 +141,7 @@ messageHandler.on(["message", "edit:text"]).filter(
     if (ctx.msg.photo) {
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
-      const file = await downloadFile(ctx);
+      const file = await ctx.downloadFile();
       const key = `images/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
       await s3.file(key).write(Bun.file(file.localPath));
       const image = await sharp(file.localPath)
@@ -186,7 +158,7 @@ messageHandler.on(["message", "edit:text"]).filter(
       });
     }
     if (ctx.msg.document) {
-      const file = await downloadFile(ctx);
+      const file = await ctx.downloadFile();
       const key = `documents/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
       await s3.file(key).write(Bun.file(file.localPath));
 
@@ -222,7 +194,7 @@ messageHandler.on(["message", "edit:text"]).filter(
     if (ctx.msg.sticker) {
       ctx.session.chatAction = new ChatAction(ctx.chatId, "typing");
 
-      const file = await downloadFile(ctx);
+      const file = await ctx.downloadFile();
 
       let images: DataContent[];
       if (ctx.msg.sticker.is_animated) {
@@ -273,6 +245,11 @@ messageHandler.on(["message", "edit:text"]).filter(
       `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
     );
 
+    await redis.RPUSH(
+      `pending_requests:${ctx.chatId}:${userId}`,
+      SuperJSON.stringify(toSend),
+    );
+
     // Get context history, limited to config value
     const recentMessages = await pullMessagesByChatAndUser({
       chatId,
@@ -315,6 +292,7 @@ Title should be what this set of messages would be stored as in the RAG db.`,
           ],
         },
       ],
+      abortSignal: ctx.session.task.signal,
     });
 
     console.log(`Summary from LLM: ${inspect(summary)}`);
@@ -356,11 +334,6 @@ Title should be what this set of messages would be stored as in the RAG db.`,
     });
 
     console.log(`Sending message to model: ${inspect(content)}`);
-
-    await redis.RPUSH(
-      `pending_requests:${ctx.chatId}:${userId}`,
-      SuperJSON.stringify(toSend),
-    );
 
     const tools = mergeTools(
       await searchTools(
@@ -599,5 +572,4 @@ Title should be what this set of messages would be stored as in the RAG db.`,
     //       .where(eq(tables.users.userId, ctx.from.id));
     //   }
     // }
-  },
-);
+  });

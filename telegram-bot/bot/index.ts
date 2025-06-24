@@ -12,13 +12,16 @@ import { messageHandler } from "bot/handlers/message";
 import { personalityHandler } from "bot/handlers/personality";
 import { requestHandler } from "bot/handlers/request";
 import { ChatAction, clearRunningChatActions } from "bot/running-tasks";
+import { downloadTelegramFile } from "bot/telegram";
 import { inspect } from "bun";
+import type { FileTypeResult } from "file-type";
 import {
   Bot,
   GrammyError,
   HttpError,
   session,
   type Context,
+  type Middleware,
   type SessionFlavor,
 } from "grammy";
 import fs from "node:fs/promises";
@@ -31,10 +34,47 @@ export type SessionData = {
   topupAmountDollars: number | null;
   pendingPaymentInvoicePayload: string | null;
   chatAction: ChatAction | null;
+  mediaGroup: string[] | null;
 };
 
 export type BotContext = SessionFlavor<SessionData> &
-  ConversationFlavor<Context>;
+  ConversationFlavor<Context> &
+  FileFlavor<Context & SessionFlavor<SessionData>>;
+
+export type FileFlavor<C extends Context & SessionFlavor<SessionData>> = C & {
+  downloadFile: () => Promise<{
+    remoteUrl: string;
+    localPath: string;
+    fileType: FileTypeResult | null;
+  }>;
+};
+
+function telegramFileMiddleware<
+  C extends FileFlavor<Context & SessionFlavor<SessionData>>,
+>(): Middleware<C> {
+  return async (ctx, next) => {
+    ctx.downloadFile = async () => {
+      if (ctx.has(":file")) {
+        const telegramFile = await ctx.getFile();
+        if (!telegramFile.file_path)
+          throw new Error(
+            "Cannot call downloadFile when there is no file path!",
+          );
+
+        const destination = path.join(
+          ctx.session.tempDir,
+          path.basename(telegramFile.file_path),
+        );
+
+        return await downloadTelegramFile(telegramFile, destination);
+      }
+
+      throw new Error("downloadFile called on context with no file");
+    };
+
+    await next();
+  };
+}
 
 export const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
   client: { apiRoot: getEnv("TELEGRAM_API_URL") },
@@ -42,6 +82,7 @@ export const bot = new Bot<BotContext>(getEnv("TELEGRAM_BOT_TOKEN"), {
 
 bot.use(session({ initial: () => ({}) }));
 bot.use(conversations());
+bot.use(telegramFileMiddleware());
 bot.use(async (ctx, next) => {
   console.log("Update Received:", { update: ctx.update });
   await next();

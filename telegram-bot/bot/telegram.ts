@@ -1,8 +1,7 @@
-import type { BotContext } from "bot";
-import { fileTypeFromBuffer, type FileTypeResult } from "file-type";
+import { fileTypeFromBuffer } from "file-type";
 import fs from "fs";
 import { Api } from "grammy";
-import path from "path";
+import type { File } from "grammy/types";
 import { getEnv } from "utils/env";
 
 export const telegram = new Api(getEnv("TELEGRAM_BOT_TOKEN"), {
@@ -13,53 +12,39 @@ export const telegram = new Api(getEnv("TELEGRAM_BOT_TOKEN"), {
  * Downloads a file from Telegram, using the API hosted
  * at the environment variable TELEGRAM_API_URL to TEMP_DIR.
  */
-export const downloadFile = async (
-  ctx: BotContext,
-): Promise<{
-  localPath: string;
-  remoteUrl: string;
-  fileType: FileTypeResult | null;
-}> => {
-  if (ctx.has(":file")) {
-    const telegramFile = await ctx.getFile();
-
-    if (!telegramFile.file_path)
-      throw new Error("Cannot call downloadFile when there is no file path!");
-
-    // Construct file URL
-    const fileUrl = `${getEnv("TELEGRAM_API_URL")}/file/bot${getEnv(
-      "TELEGRAM_BOT_TOKEN",
-    )}/${telegramFile.file_path}`;
-
-    // Download file
-    const resp = await fetch(fileUrl);
-    const localPath = path.join(
-      ctx.session.tempDir,
-      path.basename(telegramFile.file_path),
+export async function downloadTelegramFile(telegramFile: File, dest: string) {
+  if (!telegramFile.file_path)
+    throw new Error(
+      "Cannot call downloadTelegramFile when there is no file path!",
     );
-    await Bun.write(localPath, resp);
 
-    // Detect file type
-    const fileBuffer = await fs.promises.readFile(localPath);
-    const fileType = await fileTypeFromBuffer(new Uint8Array(fileBuffer));
+  // Construct file URL
+  const fileUrl = `${getEnv("TELEGRAM_API_URL")}/file/bot${getEnv(
+    "TELEGRAM_BOT_TOKEN",
+  )}/${telegramFile.file_path}`;
 
-    // Rename file with better extension
-    if (fileType) {
-      const localPathWithExt = `${localPath}.${fileType.ext}`;
-      await fs.promises.rename(localPath, localPathWithExt);
-      return {
-        remoteUrl: fileUrl,
-        localPath: localPathWithExt,
-        fileType: fileType ?? null,
-      };
-    }
+  // Download file
+  const resp = await fetch(fileUrl);
+  await Bun.write(dest, resp);
 
+  // Detect file type
+  const fileBuffer = await fs.promises.readFile(dest);
+  const fileType = await fileTypeFromBuffer(new Uint8Array(fileBuffer));
+
+  // Rename file with better extension
+  if (fileType) {
+    const localPathWithExt = `${dest}.${fileType.ext}`;
+    await fs.promises.rename(dest, localPathWithExt);
     return {
       remoteUrl: fileUrl,
-      localPath,
+      localPath: localPathWithExt,
       fileType: fileType ?? null,
     };
   }
 
-  throw new Error("downloadFile called on context with no file");
-};
+  return {
+    remoteUrl: fileUrl,
+    localPath: dest,
+    fileType: fileType ?? null,
+  } as const;
+}
