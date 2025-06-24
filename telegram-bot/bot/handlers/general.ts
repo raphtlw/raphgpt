@@ -12,18 +12,6 @@ import { Composer } from "grammy";
 
 export const generalHandler = new Composer<BotContext>();
 
-generalHandler.command("start", async (ctx, next) => {
-  const user = await retrieveUser(ctx);
-
-  await ctx.reply(
-    `hey ${
-      user.firstName ?? user.lastName
-    }, what's up? You can send a text, photo, telebubble or a voice message.`,
-  );
-
-  await next();
-});
-
 generalHandler.use(
   createConversation(async (conversation, ctx) => {
     await ctx.reply(
@@ -31,8 +19,24 @@ generalHandler.use(
     );
     const { message } = await conversation.waitFor("message:text");
     const codeInput = message.text.trim().toLowerCase();
+
     // Validate against our config schema
-    configSchema.pick({ language: true }).parse({ language: codeInput });
+    const result = configSchema
+      .pick({ language: true })
+      .safeParse({ language: codeInput });
+    if (result.error) {
+      return await ctx.reply(
+        result.error.format().language?._errors.join("\n") ??
+          "Error when validating language code",
+        {
+          reply_parameters: {
+            message_id: ctx.msgId!,
+            allow_sending_without_reply: true,
+          },
+        },
+      );
+    }
+
     // Store in Redis
     await redis.HSET(`config:${ctx.from!.id}`, "language", codeInput);
     const replyMessage = fmt`Thanks! I'll speak in ${code}${codeInput}${code} from now on.`;
@@ -42,18 +46,22 @@ generalHandler.use(
   }, "ask_language"),
 );
 
-generalHandler.use(async (ctx, next) => {
+generalHandler.command("start", async (ctx, next) => {
+  const user = await retrieveUser(ctx);
+
+  await ctx.reply(
+    `hey ${
+      user.firstName ?? user.lastName
+    }, what's up? You can send a text, photo, telebubble or a voice message.`,
+  );
+
   if (!ctx.from) return await next();
-  // only trigger on /start
-  if (ctx.msg?.text?.startsWith("/start")) {
-    const existing = await redis.HGET(`config:${ctx.from.id}`, "language");
-    if (!existing) {
-      // kick off the conversation
-      await ctx.conversation.enter("ask_language");
-      return;
-    }
+
+  const existing = await redis.HGET(`config:${ctx.from.id}`, "language");
+  if (!existing) {
+    await ctx.conversation.enter("ask_language");
+    return;
   }
-  await next();
 });
 
 generalHandler.command("clear", async (ctx) => {

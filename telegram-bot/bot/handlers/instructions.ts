@@ -106,11 +106,11 @@ instructionsHandler.use(
       .insert(tables.systemInstructions)
       .values({ content: message.text });
     await ctx.reply("Instruction added!");
-  }, "instr-add"),
+  }, "instr_add"),
 );
 
 instructionsHandler.callbackQuery(/instr-add/, async (ctx) => {
-  await ctx.conversation.enter("instr-add");
+  await ctx.conversation.enter("instr_add");
 });
 
 // Conversation flow to edit an existing instruction
@@ -130,12 +130,12 @@ instructionsHandler.use(
       .set({ content: message.text })
       .where(eq(tables.systemInstructions.id, instr.id));
     await ctx.reply("Instruction updated!");
-  }, "instr-edit"),
+  }, "instr_edit"),
 );
 
 instructionsHandler.callbackQuery(/instr-edit-(\d+)/, async (ctx) => {
   const page = parseInt(ctx.match![1]!, 10);
-  await ctx.conversation.enter("instr-edit", page);
+  await ctx.conversation.enter("instr_edit", page);
 });
 
 // Remove instruction
