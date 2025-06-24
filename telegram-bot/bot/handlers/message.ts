@@ -302,13 +302,16 @@ With previous messages in mind, produce queries for indexing and storage. Place 
     content: remindingSystemPrompt.join("\n"),
   });
 
+  // Gather all pending requests and send it to the model
   const pendingRequests = await redis
     .LRANGE(`pending_requests:${ctx.chatId}:${userId}`, 0, -1)
     .then((jsons) => jsons.map((c: string) => SuperJSON.parse<UserContent>(c)));
 
+  // Includes all current + previous requests
   console.log(`Pending requests: ${inspect(pendingRequests)}`);
 
-  const content = [...pendingRequests.flat(1), ...toSend] as UserContent;
+  // Flatten it because it is an array of UserContent
+  const content = pendingRequests.flat(1) as UserContent;
 
   messages.push({
     role: "user",

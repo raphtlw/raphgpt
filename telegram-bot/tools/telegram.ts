@@ -5,6 +5,7 @@ import { insertMessage } from "bot/context-history";
 import { telegram } from "bot/telegram";
 import { redis } from "connections/redis";
 import { vectorStore } from "connections/vector";
+import { isValid, parseISO } from "date-fns";
 import { db, tables } from "db";
 import { eq, or } from "drizzle-orm";
 import { getEnv } from "utils/env";
@@ -80,6 +81,38 @@ export function telegramTools(ctx: BotContext): ToolSet {
         });
 
         return `Message sent to ${chatIdToSend}`;
+      },
+    }),
+
+    schedule_message: tool({
+      description:
+        "Schedule a text message to be sent later to any user or chat.",
+      parameters: z.object({
+        recipient: z
+          .union([z.number(), z.string()])
+          .describe(
+            'Chat ID or username/first name/last name (e.g. 123456 or "alice")',
+          ),
+        text: z.string().describe("Message text to send"),
+        send_at: z
+          .string()
+          .describe(
+            'ISO-8601 date/time in the future (e.g. "2024-08-15T14:00:00+08:00")',
+          ),
+      }),
+      async execute({ recipient, text, send_at }) {
+        const chatId = await resolveChatId(recipient);
+        const date = parseISO(send_at);
+        if (!isValid(date) || date <= new Date()) {
+          throw new Error("Invalid or past send_at timestamp");
+        }
+        await db.insert(tables.scheduled_messages).values({
+          chatId,
+          userId: ctx.from!.id,
+          content: text,
+          scheduleAt: date,
+        });
+        return `✅ Scheduled for ${date.toISOString()} to ${chatId}`;
       },
     }),
 

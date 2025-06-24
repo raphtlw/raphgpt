@@ -17,14 +17,6 @@ export const usersRelations = relations(users, ({ one }) => ({
   solanaWallet: one(solanaWallets),
 }));
 
-/**
- * User-specific configuration, such as preferred timezone.
- */
-export const userConfig = sqliteTable("user_config", {
-  userId: integer("user_id").primaryKey(),
-  timezone: text("timezone").notNull(),
-});
-
 export const messages = sqliteTable("messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   chatId: integer("chat_id").notNull(),
@@ -81,6 +73,18 @@ export const interactionExamples = sqliteTable("interaction_examples", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userInput: text("user_input").notNull(),
   botResponse: text("bot_response").notNull(),
+});
+
+export const scheduled_messages = sqliteTable("scheduled_messages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  chatId: integer("chat_id").notNull(),
+  userId: integer("user_id").notNull(),
+  content: text("content").notNull(),
+  scheduleAt: integer("schedule_at", { mode: "timestamp" }).notNull(),
+  sent: integer("sent").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 export const solanaWallets = sqliteTable("solana_wallets", {
