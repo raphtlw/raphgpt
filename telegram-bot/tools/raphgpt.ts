@@ -299,7 +299,7 @@ export function raphgptTools({ ctx }: ToolData) {
         prompt: z
           .string()
           .describe(
-            "Prompt for project. Be as specific as you can, including all nuances and specifications about the project." +
+            "Prompt for codex agent. Be as specific as you can, including all nuances and specifications about the project." +
               "If the user did not specify clearly what they wanted, ask them before using this tool.",
           ),
         input_zip_key: z
