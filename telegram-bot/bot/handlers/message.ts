@@ -22,22 +22,22 @@ messageHandler
       if (ctx.session.mediaGroupId !== mgid) {
         clearTimeout(ctx.session.mediaGroupTimer!);
         ctx.session.mediaGroupId = mgid;
-        ctx.session.mediaGroupCtxs = [];
+        ctx.session.mediaGroupMsgs = [];
       }
 
-      // buffer this incoming ctx
-      ctx.session.mediaGroupCtxs!.push(ctx);
+      // buffer this incoming msg
+      ctx.session.mediaGroupMsgs!.push(ctx.msg);
 
       // debounce 500ms since last media in this group
       clearTimeout(ctx.session.mediaGroupTimer!);
       ctx.session.mediaGroupTimer = setTimeout(async () => {
-        const buffered = ctx.session.mediaGroupCtxs!;
+        const buffered = ctx.session.mediaGroupMsgs!;
         let mergedSend: UserContent = [];
         let mergedRemind: string[] = [];
 
         // for each media message, extract its UserContent + any system hints
-        for (const c of buffered) {
-          const [toSend, reminding] = await processTelegramMessage(c);
+        for (const msg of buffered) {
+          const [toSend, reminding] = await processTelegramMessage(ctx, msg);
           mergedSend.push(...toSend);
           mergedRemind.push(...reminding);
         }
@@ -55,7 +55,7 @@ messageHandler
 
         // clear buffers
         ctx.session.mediaGroupId = undefined;
-        ctx.session.mediaGroupCtxs = undefined;
+        ctx.session.mediaGroupMsgs = undefined;
         ctx.session.mediaGroupTimer = undefined;
 
         await next();
@@ -97,7 +97,27 @@ messageHandler
 
       ctx.session.task = new AbortController();
 
-      const [toSend, remindingSystemPrompt] = await processTelegramMessage(ctx);
+      const toSend: UserContent = [];
+      const remindingSystemPrompt: string[] = [];
+
+      if (ctx.msg.reply_to_message) {
+        const [replyTo, replyToSystemContent] = await processTelegramMessage(
+          ctx,
+          ctx.msg.reply_to_message,
+        );
+        console.log(
+          "Replied-to message contents:",
+          replyTo,
+          replyToSystemContent,
+        );
+        toSend.push(...replyTo);
+        remindingSystemPrompt.push(...replyToSystemContent);
+      }
+      const [messageContent, messageSystemContent] =
+        await processTelegramMessage(ctx, ctx.msg);
+      console.log("Message contents:", messageContent, messageSystemContent);
+      toSend.push(...messageContent);
+      remindingSystemPrompt.push(...messageSystemContent);
 
       await redis.RPUSH(
         `pending_requests:${ctx.chatId}:${userId}`,

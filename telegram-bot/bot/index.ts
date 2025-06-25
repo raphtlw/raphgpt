@@ -24,6 +24,7 @@ import {
   type Middleware,
   type SessionFlavor,
 } from "grammy";
+import type { Message } from "grammy/types";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getEnv } from "utils/env";
@@ -37,7 +38,7 @@ export type SessionData = {
 
   // Media groups
   mediaGroupId?: string;
-  mediaGroupCtxs?: BotContext[];
+  mediaGroupMsgs?: Message[];
   mediaGroupTimer?: NodeJS.Timeout;
 };
 

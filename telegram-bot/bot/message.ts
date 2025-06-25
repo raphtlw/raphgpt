@@ -32,6 +32,7 @@ import { analyzeVideo } from "connections/video-parser";
 import { db } from "db";
 import { searchChatMemory } from "db/vector";
 import { InputFile } from "grammy";
+import type { Message } from "grammy/types";
 import path from "path";
 import type { FileOutput } from "replicate";
 import sharp from "sharp";
@@ -49,28 +50,27 @@ import TGS from "utils/tgs";
 import { mergeTools, searchTools } from "utils/tools";
 import { z } from "zod";
 
-export async function processTelegramMessage(ctx: BotContext) {
+export async function processTelegramMessage(ctx: BotContext, msg: Message) {
   if (!ctx.from) throw new Error("ctx.from not found");
   if (!ctx.chatId) throw new Error("ctx.chatId not found");
-  if (!ctx.msg) throw new Error("ctx.msg not found");
 
   const userId = ctx.from.id;
   const chatId = ctx.chatId;
 
-  if (ctx.msg.text?.startsWith("-bot ")) {
-    ctx.msg.text = ctx.msg.text.replace("-bot ", "");
+  if (msg.text?.startsWith("-bot ")) {
+    msg.text = msg.text.replace("-bot ", "");
   }
-  if (ctx.msg.caption?.startsWith("-bot ")) {
-    ctx.msg.caption = ctx.msg.caption.replace("-bot ", "");
+  if (msg.caption?.startsWith("-bot ")) {
+    msg.caption = msg.caption.replace("-bot ", "");
   }
 
   const toSend: UserContent = [];
   const remindingSystemPrompt: string[] = [];
 
-  if (ctx.msg.text) {
-    toSend.push({ type: "text", text: ctx.msg.text });
+  if (msg.text) {
+    toSend.push({ type: "text", text: msg.text });
   }
-  if (ctx.msg.voice) {
+  if (msg.voice) {
     const file = await ctx.downloadFile();
     const inputFileId = createId();
     const audioFilePath = path.join(DATA_DIR, `input-${inputFileId}.mp3`);
@@ -92,7 +92,7 @@ export async function processTelegramMessage(ctx: BotContext) {
 
     toSend.push({ type: "text", text: transcript.text });
   }
-  if (ctx.msg.video_note || ctx.msg.video) {
+  if (msg.video_note || msg.video) {
     const file = await ctx.downloadFile();
 
     const { transcript, frames, summary } = await analyzeVideo(
@@ -113,7 +113,7 @@ export async function processTelegramMessage(ctx: BotContext) {
     }
     toSend.push({ type: "text", text: transcript });
   }
-  if (ctx.msg.photo) {
+  if (msg.photo) {
     const file = await ctx.downloadFile();
     const key = `images/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
     await s3.file(key).write(Bun.file(file.localPath));
@@ -130,7 +130,7 @@ export async function processTelegramMessage(ctx: BotContext) {
       text: `Image uploaded as ${key}`,
     });
   }
-  if (ctx.msg.document) {
+  if (msg.document) {
     const file = await ctx.downloadFile();
     const key = `documents/${ctx.chatId}/${userId}/${path.basename(file.localPath)}`;
     await s3.file(key).write(Bun.file(file.localPath));
@@ -142,11 +142,11 @@ export async function processTelegramMessage(ctx: BotContext) {
       },
       {
         type: "text",
-        text: `File size in bytes: ${ctx.msg.document.file_size}`,
+        text: `File size in bytes: ${msg.document.file_size}`,
       },
       {
         type: "text",
-        text: `Mime type: ${ctx.msg.document.mime_type}`,
+        text: `Mime type: ${msg.document.mime_type}`,
       },
     );
 
@@ -158,17 +158,17 @@ export async function processTelegramMessage(ctx: BotContext) {
       });
     }
   }
-  if (ctx.msg.location) {
+  if (msg.location) {
     toSend.push({
       type: "text",
-      text: `Location: ${JSON.stringify(ctx.msg.location)}`,
+      text: `Location: ${JSON.stringify(msg.location)}`,
     });
   }
-  if (ctx.msg.sticker) {
+  if (msg.sticker) {
     const file = await ctx.downloadFile();
 
     let images: DataContent[];
-    if (ctx.msg.sticker.is_animated) {
+    if (msg.sticker.is_animated) {
       const mp4FilePath = await new TGS(file.localPath).convertToMp4(
         path.join(TEMP_DIR, `${createId()}.mp4`),
       );
@@ -194,7 +194,7 @@ export async function processTelegramMessage(ctx: BotContext) {
 
     toSend.push({
       type: "text",
-      text: `Telegram sticker: ${JSON.stringify(ctx.msg.sticker)}`,
+      text: `Telegram sticker: ${JSON.stringify(msg.sticker)}`,
     });
     toSend.push(
       ...images.map((img) => ({
@@ -203,16 +203,12 @@ export async function processTelegramMessage(ctx: BotContext) {
       })),
     );
   }
-  if (ctx.msg.caption) {
+  if (msg.caption) {
     toSend.push({
       type: "text",
-      text: ctx.msg.caption,
+      text: msg.caption,
     });
   }
-
-  console.log(
-    `User message content: ${inspect({ toSend, remindingSystemPrompt })}`,
-  );
 
   return [toSend, remindingSystemPrompt] as const;
 }
@@ -224,7 +220,6 @@ export async function gatherAndRunLLM(
 ) {
   if (!ctx.from) throw new Error("ctx.from not found");
   if (!ctx.chatId) throw new Error("ctx.chatId not found");
-  if (!ctx.msg) throw new Error("ctx.msg not found");
 
   const userId = ctx.from.id;
   const chatId = ctx.chatId;
