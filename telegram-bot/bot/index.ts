@@ -212,8 +212,10 @@ bot.catch(async ({ error, ctx, message }) => {
     console.error(`Error in request: ${error.description}`);
   } else if (error instanceof HttpError) {
     console.error(`Could not contact Telegram: ${inspect(error)}`);
+  } else if ((error as Error).name === "AbortError") {
+    console.error(`Aborted: ${message}`);
   } else {
     console.error(`Unknown error: ${inspect(error)}`);
+    await ctx.reply(message);
   }
-  await ctx.reply(message);
 });
