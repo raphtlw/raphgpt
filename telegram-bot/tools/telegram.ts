@@ -106,7 +106,7 @@ export function telegramTools(ctx: BotContext): ToolSet {
         if (!isValid(date) || date <= new Date()) {
           throw new Error("Invalid or past send_at timestamp");
         }
-        await db.insert(tables.scheduled_messages).values({
+        await db.insert(tables.scheduledMessages).values({
           chatId,
           userId: ctx.from!.id,
           content: text,

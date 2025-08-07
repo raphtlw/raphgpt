@@ -6,6 +6,7 @@ import { handleUserWalletBalanceChange } from "connections/solana";
 import { CronJob } from "cron";
 import { db, tables } from "db";
 import { and, eq, isNotNull, lte } from "drizzle-orm";
+import { GrammyError } from "grammy";
 import telegramifyMarkdown from "telegramify-markdown";
 import { getEnv } from "utils/env";
 
@@ -34,18 +35,30 @@ export const checkWalletJob = new CronJob("* * * * *", async () => {
 
 // Send scheduled messages
 export const scheduleJob = new CronJob("*/1 * * * *", async () => {
-  const due = await db.query.scheduled_messages.findMany({
+  const due = await db.query.scheduledMessages.findMany({
     where: and(
-      lte(tables.scheduled_messages.scheduleAt, new Date()),
-      eq(tables.scheduled_messages.sent, 0),
+      lte(tables.scheduledMessages.scheduleAt, new Date()),
+      eq(tables.scheduledMessages.sent, 0),
     ),
   });
   for (const msg of due) {
-    await telegram.sendMessage(msg.chatId, msg.content);
+    try {
+      await telegram.sendMessage(msg.chatId, msg.content);
+    } catch (e) {
+      if (e instanceof GrammyError) {
+        // if bot was blocked by user
+        if (e.error_code === 403) {
+          // remove the user from all scheduled jobs
+          await db
+            .delete(tables.scheduledMessages)
+            .where(eq(tables.scheduledMessages.userId, msg.userId));
+        }
+      }
+    }
     await db
-      .update(tables.scheduled_messages)
+      .update(tables.scheduledMessages)
       .set({ sent: 1 })
-      .where(eq(tables.scheduled_messages.id, msg.id));
+      .where(eq(tables.scheduledMessages.id, msg.id));
   }
 });
 

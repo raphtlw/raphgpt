@@ -75,7 +75,7 @@ export const interactionExamples = sqliteTable("interaction_examples", {
   botResponse: text("bot_response").notNull(),
 });
 
-export const scheduled_messages = sqliteTable("scheduled_messages", {
+export const scheduledMessages = sqliteTable("scheduled_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   chatId: integer("chat_id").notNull(),
   userId: integer("user_id").notNull(),
