@@ -62,10 +62,7 @@ export const agentExecute =
     });
 
     const { text, response, finishReason } = await generateText({
-      model: openai("o4-mini", {
-        structuredOutputs: false,
-        reasoningEffort: "high",
-      }),
+      model: openai("gpt-5-mini", { structuredOutputs: false }),
       system: await buildPrompt("agent", {
         me: JSON.stringify(await telegram.getMe()),
         date: new Date().toLocaleString(),

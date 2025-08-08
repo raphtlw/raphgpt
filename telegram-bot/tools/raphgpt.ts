@@ -430,7 +430,7 @@ export function raphgptTools({ ctx }: ToolData) {
 
         // Call multi-modal LLM
         const { text } = await generateText({
-          model: openai("o4-mini", { structuredOutputs: false }),
+          model: openai("gpt-5-mini", { structuredOutputs: false }),
           system:
             "You are a multi-modal assistant. Process the provided file contents per user instruction.",
           messages: [
